@@ -8,15 +8,17 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import httpx
+
 from .abilities.weather import WeatherService
 from .cognition.engine import CognitiveEngine
 from .config import load_settings, storage_target
 from .initiative.engine import InitiativeEngine
 from .initiative.scheduler import Scheduler
-from .llm.anthropic_provider import AnthropicProvider
+from .llm.factory import make_llm, resolved_models
 from .media.links import SafeFetcher
-from .media.processors import MediaProcessor, SpeechToText
-from .memory.embeddings import LocalHashEmbedder, VoyageEmbedder
+from .media.processors import MediaProcessor, OpenRouterSpeechToText, SpeechToText
+from .memory.embeddings import make_embedder
 from .memory.store import MemoryStore
 from .persona.loader import load_persona
 from .telegram.bot import TelegramInterface
@@ -26,17 +28,37 @@ async def build(settings=None):
     s = settings or load_settings()
     persona = load_persona(s.persona_dir)
     store = await MemoryStore(storage_target(s)).open()
-    if s.embedding_provider == "voyage" and s.voyage_api_key:
-        embedder = VoyageEmbedder(s.voyage_api_key, s.voyage_model)
-    else:
-        embedder = LocalHashEmbedder()
-    llm = AnthropicProvider(s.main_model, s.background_model, s.main_effort, s.use_refusal_fallbacks)
+    embedder = make_embedder(s)
+    llm = make_llm(s)
     weather = WeatherService()
     engine = CognitiveEngine(s, persona, store, llm, embedder, weather)
-    await engine.setup()
+    try:
+        await engine.setup()
+    except BaseException as e:
+        await store.close()  # иначе поток aiosqlite не даст процессу завершиться
+        if not isinstance(e, httpx.HTTPStatusError):
+            raise
+        raise SystemExit(f"Эмбеддинги ({s.embedding_provider}) вернули HTTP {e.response.status_code}: "
+                         "проверьте OPENROUTER_API_KEY / OPENROUTER_EMBEDDING_MODEL или поставьте EMBEDDING_PROVIDER=local")
     s.media_tmp_dir.mkdir(parents=True, exist_ok=True)
-    media = MediaProcessor(SpeechToText(s.stt_base_url, s.stt_api_key, s.stt_model), SafeFetcher(verify=s.link_ca_bundle or True),
-                           s.media_tmp_dir, s.link_fetch_enabled)
+    if s.stt_provider == "openrouter":
+        stt = OpenRouterSpeechToText(s.openrouter_base_url, s.openrouter_api_key, s.openrouter_stt_model, s.media_tmp_dir)
+
+        async def log_stt(cost: float, data: dict) -> None:
+            from .llm.base import Usage
+
+            u = data.get("usage") or {}
+            await store.log_usage(None, "stt", s.openrouter_stt_model,
+                                  Usage(int(u.get("prompt_tokens") or 0), int(u.get("completion_tokens") or 0)), cost)
+
+        stt.on_usage = log_stt
+    else:
+        stt = SpeechToText(s.stt_base_url, s.stt_api_key, s.stt_model)
+    media = MediaProcessor(stt, SafeFetcher(verify=s.link_ca_bundle or True), s.media_tmp_dir, s.link_fetch_enabled)
+    main_m, bg_m = resolved_models(s)
+    logging.getLogger(__name__).info("LLM: %s (%s / %s), embeddings: %s, STT: %s, storage: %s",
+                                     s.llm_provider, main_m, bg_m, s.embedding_provider, s.stt_provider,
+                                     store.d.dialect)
     return s, engine, media
 
 
@@ -46,13 +68,15 @@ async def main() -> None:
     if not settings.telegram_token:
         raise SystemExit("TELEGRAM_BOT_TOKEN не задан (см. .env.example)")
     s, engine, media = await build(settings)
-    tg = TelegramInterface(s, engine, media)
-    scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds)
-    scheduler.start()
+    scheduler = None
     try:
+        tg = TelegramInterface(s, engine, media)
+        scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds)
+        scheduler.start()
         await tg.run()
     finally:
-        await scheduler.stop()
+        if scheduler:
+            await scheduler.stop()
         await engine.drain()
         await engine.store.close()
 

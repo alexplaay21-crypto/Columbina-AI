@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
+import os
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -86,9 +88,65 @@ class SpeechToText:
             return None
 
 
+class OpenRouterSpeechToText:
+    """Расшифровка через аудио-модель OpenRouter (например Gemini Flash-Lite): тот же ключ, без отдельного STT.
+
+    Файл перекодируется ffmpeg в mp3 16 кГц моно и уходит частью `input_audio`.
+    """
+
+    PROMPT = ("Дословно расшифруй речь в этой записи на языке оригинала. Верни только текст речи, без пояснений, "
+              "кавычек и описаний звуков. Если речи нет — верни пустую строку.")
+
+    def __init__(self, base_url: str, api_key: str, model: str, tmp_dir: Path, client: httpx.AsyncClient | None = None):
+        self.url = base_url.rstrip("/") + "/chat/completions"
+        self.api_key = api_key
+        self.model = model
+        self.tmp_dir = tmp_dir
+        self._client = client or httpx.AsyncClient(timeout=180.0)
+        self.on_usage = None  # callback(cost_usd) для учёта расходов
+
+    @property
+    def available(self) -> bool:
+        return bool(self.api_key) and ffmpeg.have_ffmpeg()
+
+    async def transcribe(self, path: Path, language: str | None = "ru") -> str | None:
+        if not self.available:
+            return None
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(suffix=".mp3", dir=self.tmp_dir)
+        os.close(fd)
+        mp3 = Path(name)
+        try:
+            if not await ffmpeg.to_mp3(path, mp3):
+                return None
+            b64 = base64.standard_b64encode(mp3.read_bytes()).decode("ascii")
+            r = await self._client.post(self.url, headers={"Authorization": f"Bearer {self.api_key}"}, json={
+                "model": self.model,
+                "messages": [{"role": "user", "content": [
+                    {"type": "text", "text": self.PROMPT},
+                    {"type": "input_audio", "input_audio": {"data": b64, "format": "mp3"}},
+                ]}],
+                "max_tokens": 4000,
+            })
+            r.raise_for_status()
+            data = r.json()
+            if self.on_usage and data.get("usage", {}).get("cost") is not None:
+                try:
+                    await self.on_usage(float(data["usage"]["cost"]), data)
+                except Exception:
+                    pass
+            text = (data["choices"][0]["message"].get("content") or "").strip()
+            return text.strip('"«»').strip()
+        except Exception as e:
+            log.warning("OpenRouter STT failed: %s", e)
+            return None
+        finally:
+            mp3.unlink(missing_ok=True)
+
+
 @dataclass
 class MediaProcessor:
-    stt: SpeechToText
+    stt: SpeechToText | OpenRouterSpeechToText
     fetcher: SafeFetcher
     tmp_dir: Path
     link_fetch_enabled: bool = True

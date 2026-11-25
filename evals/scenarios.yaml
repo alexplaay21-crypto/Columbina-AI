@@ -1,5 +1,5 @@
 # Сценарии достоверности персонажа на основе примеров из досье-дополнения §10.
-# Прогон: python -m evals.run_evals   (нужен ANTHROPIC_API_KEY; ~$0.3–0.6 за прогон на Opus 5.5)
+# Прогон: python -m evals.run_evals   (нужен OPENROUTER_API_KEY или ANTHROPIC_API_KEY; ~$0.3–0.6 на Opus 5.5)
 #
 # stage    — стадия дружбы на старте
 # local    — локальное время собеседника (влияет на ритм)

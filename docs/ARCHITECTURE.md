@@ -51,7 +51,9 @@ columbina/
   main.py                   сборка модулей и запуск
   persona/loader.py         загрузка личности из data/persona
   llm/base.py               провайдер-независимые типы (LLMRequest/Response, Part, ToolSpec)
-  llm/anthropic_provider.py реализация на Anthropic SDK (кэш, effort, refusal-fallback, стоимость)
+  llm/openrouter_provider.py OpenRouter (по умолчанию): кэш Claude, reasoning, JSON-схемы, инструменты, usage.cost
+  llm/anthropic_provider.py прямой Anthropic SDK (кэш, effort, refusal-fallback, стоимость)
+  llm/factory.py            выбор провайдера и моделей из .env
   llm/fake.py               детерминированный провайдер для тестов
   cognition/engine.py       Cognitive Engine: ход разговора, инструменты, фон, инициатива
   cognition/context_builder.py  «Внутренний контекст» + история с метками пауз
@@ -78,7 +80,7 @@ columbina/
 data/persona/               формат хранения личности (ниже)
 evals/                      живые проверки достоверности (модель + судья)
 scripts/token_report.py     оценка токенов и стоимости
-tests/                      85 тестов (SQLite) + 31 повтор на PostgreSQL
+tests/                      95 тестов (SQLite) + 32 повтора на PostgreSQL
 Dockerfile, docker-compose.yml  бот + postgres:17
 scripts/migrate_sqlite_to_pg.py перенос памяти из SQLite в PostgreSQL
 ```

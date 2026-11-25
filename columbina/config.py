@@ -50,19 +50,36 @@ class Settings:
     admin_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ADMIN_USER_IDS"))
     debounce_seconds: float = field(default_factory=lambda: _env_float("DEBOUNCE_SECONDS", 2.5))
 
-    # LLM (Anthropic)
-    main_model: str = field(default_factory=lambda: _env("MAIN_MODEL", "claude-opus-5-5"))
-    background_model: str = field(default_factory=lambda: _env("BACKGROUND_MODEL", "claude-haiku-5-5"))
+    # LLM: "openrouter" | "anthropic" (по умолчанию openrouter, если задан OPENROUTER_API_KEY)
+    llm_provider: str = field(default_factory=lambda: _env(
+        "LLM_PROVIDER", "openrouter" if _env("OPENROUTER_API_KEY") else "anthropic").lower())
+    openrouter_api_key: str = field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
+    openrouter_base_url: str = field(default_factory=lambda: _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+    openrouter_embedding_model: str = field(default_factory=lambda: _env("OPENROUTER_EMBEDDING_MODEL", "baai/bge-m3"))
+    main_fallback_models: tuple[str, ...] = field(default_factory=lambda: tuple(
+        m.strip() for m in _env("MAIN_FALLBACK_MODELS").split(",") if m.strip()))
+    # user — «внутренний контекст» блоком в конце сообщения (кэш истории работает на любой модели);
+    # system — отдельным system-сообщением (так делает прямой Anthropic API)
+    inner_context_placement: str = field(default_factory=lambda: _env("INNER_CONTEXT_PLACEMENT", "user"))
+    # Пусто — по провайдеру: anthropic/claude-opus-5.5 и anthropic/claude-haiku-5.5 (OpenRouter)
+    # или claude-opus-5-5 и claude-haiku-5-5 (Anthropic)
+    main_model: str = field(default_factory=lambda: _env("MAIN_MODEL"))
+    background_model: str = field(default_factory=lambda: _env("BACKGROUND_MODEL"))
     main_effort: str = field(default_factory=lambda: _env("MAIN_EFFORT", "low"))
     main_max_tokens: int = field(default_factory=lambda: _env_int("MAIN_MAX_TOKENS", 4000))
     use_refusal_fallbacks: bool = field(default_factory=lambda: _env_bool("USE_REFUSAL_FALLBACKS", True))
 
     # Embeddings: "voyage" | "local"
-    embedding_provider: str = field(default_factory=lambda: _env("EMBEDDING_PROVIDER", "local"))
+    # Эмбеддинги: "openrouter" (по умолчанию при ключе OpenRouter) | "voyage" | "local"
+    embedding_provider: str = field(default_factory=lambda: _env(
+        "EMBEDDING_PROVIDER", "openrouter" if _env("OPENROUTER_API_KEY") else "local").lower())
     voyage_api_key: str = field(default_factory=lambda: _env("VOYAGE_API_KEY"))
     voyage_model: str = field(default_factory=lambda: _env("VOYAGE_MODEL", "voyage-3.5-lite"))
 
-    # Speech-to-text: любой Whisper-совместимый endpoint (OpenAI, Groq, локальный faster-whisper-server)
+    # Speech-to-text: "openrouter" (аудио-модель через тот же ключ) | "whisper" (OpenAI/Groq-совместимый endpoint)
+    stt_provider: str = field(default_factory=lambda: _env(
+        "STT_PROVIDER", "openrouter" if _env("OPENROUTER_API_KEY") and not _env("STT_API_KEY") else "whisper").lower())
+    openrouter_stt_model: str = field(default_factory=lambda: _env("OPENROUTER_STT_MODEL", "google/gemini-3.1-flash-lite"))
     stt_base_url: str = field(default_factory=lambda: _env("STT_BASE_URL", "https://api.openai.com/v1"))
     stt_api_key: str = field(default_factory=lambda: _env("STT_API_KEY"))
     stt_model: str = field(default_factory=lambda: _env("STT_MODEL", "gpt-4o-mini-transcribe"))

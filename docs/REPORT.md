@@ -15,7 +15,7 @@
 | 9. Инициатива | ✅ записки, незакрытые темы, полнолуние, первый снег, молчание, тайный подарок; антиспам и настройки | `initiative/` |
 | 10. Модульность и токены | ✅ провайдер-независимый `LLMProvider`; кэш ядра на 1 ч, кэш истории, динамика после кэша; бюджет контекста; суммаризация; фон на дешёвой модели; учёт стоимости и дневной лимит | `llm/`, `scripts/token_report.py` |
 | 11. Главное правило | ✅ запреты в ядре + пост-проверка с перегенерацией | `core_prompt.md`, `style_rules.yaml` |
-| Тесты | ✅ 85 детерминированных тестов (+31 повтор на PostgreSQL) + 15 живых сценариев с судьёй | `tests/`, `evals/` |
+| Тесты | ✅ 95 детерминированных тестов (+32 повтора на PostgreSQL) + 15 живых сценариев с судьёй | `tests/`, `evals/` |
 | Хранилище и деплой | ✅ PostgreSQL 17 + Docker Compose, SQLite для разработки, миграция SQLite → PostgreSQL | `memory/db.py`, `Dockerfile`, `docker-compose.yml` |
 
 ### Добавлено сверх ТЗ (полезное)
@@ -42,16 +42,28 @@
 
 ## Какие API используются
 
-| API | Для чего | Обязателен |
-| --- | --- | --- |
-| Telegram Bot API (aiogram 3) | общение | да |
-| Anthropic Messages API: `claude-opus-5-5` | основной ответ, инициатива | да |
-| Anthropic Messages API: `claude-haiku-5-5` | рефлексия, суммаризация (структурированный JSON) | да |
-| Whisper-совместимый STT (OpenAI `gpt-4o-mini-transcribe` / Groq `whisper-large-v3-turbo`) | голосовые, звук видео | нет |
-| Voyage AI `voyage-3.5-lite` | эмбеддинги памяти (лучше локальных) | нет: есть бесплатный локальный |
-| Open-Meteo | погода и часовой пояс по городу | нет, бесплатно, без ключа |
+Основной вариант — **OpenRouter**: один ключ (`OPENROUTER_API_KEY`) закрывает модели, память и голос.
 
-Функции Anthropic API: prompt caching (ядро на 1 ч, история на 5 мин), mid-conversation system message для динамического контекста, adaptive thinking с `effort: low`, структурированные выходы (`output_config.format`), tool use (`leave_note`), vision, PDF, серверный `fallbacks: "default"` на случай отказа классификатора.
+| API | Для чего | По умолчанию |
+| --- | --- | --- |
+| Telegram Bot API (aiogram 3) | общение | — |
+| OpenRouter Chat Completions | основной ответ, инициатива | `anthropic/claude-opus-5.5`, запасная `anthropic/claude-sonnet-5.5` |
+| OpenRouter Chat Completions | рефлексия, суммаризация (JSON по схеме) | `anthropic/claude-haiku-5.5` |
+| OpenRouter Embeddings | эмбеддинги памяти | `baai/bge-m3` (мультиязычный) |
+| OpenRouter, аудио-модель | расшифровка голосовых и звука видео | `google/gemini-3.1-flash-lite` |
+| Open-Meteo | погода и часовой пояс по городу | бесплатно, без ключа |
+
+Альтернатива: прямой Anthropic API (`LLM_PROVIDER=anthropic`), Whisper-совместимый STT, Voyage AI.
+Любая модель OpenRouter подключается строкой `MAIN_MODEL=…`; имена вида `claude-opus-5-5` переводятся
+в `anthropic/claude-opus-5.5` автоматически. Персонаж на не-Claude моделях стоит проверить через evals.
+
+Через OpenRouter используется: prompt caching для Claude (`cache_control`: ядро — 1 ч, история — 5 мин),
+`reasoning.effort`, `response_format: json_schema` (с откатом на JSON по инструкции, если модель не умеет),
+function calling, изображения и PDF частями сообщения, `models` для запасных моделей, `usage.cost` для учёта.
+«Внутренний контекст» идёт блоком `<inner_context>` в конце сообщения собеседника — так кэш истории
+работает на любой модели; подделать этот блок собеседник не может (теги в его тексте экранируются).
+
+Функции прямого Anthropic API (если выбран он): prompt caching (ядро на 1 ч, история на 5 мин), mid-conversation system message для динамического контекста, adaptive thinking с `effort: low`, структурированные выходы (`output_config.format`), tool use (`leave_note`), vision, PDF, серверный `fallbacks: "default"` на случай отказа классификатора.
 
 Сменить провайдера можно, реализовав `LLMProvider.complete()` (`columbina/llm/base.py`). Остальной код от провайдера не зависит. Модели меняются в `.env`: `MAIN_MODEL`, `BACKGROUND_MODEL`.
 
@@ -79,7 +91,9 @@
 | Claude Sonnet 5.5 | ~$0,005–0,008 | ≈ $0,3–0,45 | ≈ $1–1,5 | ≈ $9–14 |
 | Claude Haiku 5.5 | ~$0,0004 | ≈ $0,03–0,05 | ≈ $0,15 | ≈ $1–1,5 |
 
-Сюда уже входят фон (~$0,01/день), фото (~$0,02), STT (~$0,015 у OpenAI `gpt-4o-mini-transcribe`) и Voyage (меньше цента). Open-Meteo бесплатен.
+Сюда уже входят фон (~$0,01/день), фото (~$0,02), расшифровка голоса (~$0,003 за 5 минут на Gemini Flash-Lite через OpenRouter) и эмбеддинги `baai/bge-m3` (меньше цента). Open-Meteo бесплатен.
+
+Цены Claude на OpenRouter совпадают с ценами Anthropic (проверено по `/api/v1/models`); сам OpenRouter берёт комиссию при пополнении баланса. Точный расход видно в `usage.cost` каждого ответа — он пишется в таблицу `usage` и в `/stats`.
 
 Фактический расход виден в `/stats` (администратор) и в таблице `usage`. Защита от перерасхода: `DAILY_BUDGET_USD_PER_USER` (по умолчанию $3) и `ALLOWED_USER_IDS`.
 

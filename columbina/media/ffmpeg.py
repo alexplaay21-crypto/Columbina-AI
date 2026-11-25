@@ -50,6 +50,12 @@ async def extract_audio(src: Path, dst: Path) -> bool:
     return code == 0 and dst.exists() and dst.stat().st_size > 0
 
 
+async def to_mp3(src: Path, dst: Path) -> bool:
+    code, _, _ = await _run("ffmpeg", "-y", "-v", "error", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000",
+                            "-c:a", "libmp3lame", "-b:a", "48k", str(dst))
+    return code == 0 and dst.exists() and dst.stat().st_size > 0
+
+
 async def extract_frames(src: Path, out_dir: Path, timestamps: list[float], max_side: int = 768) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     frames: list[Path] = []

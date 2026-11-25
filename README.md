@@ -10,7 +10,7 @@ Telegram-компаньон Коломбина: личность по досье
 ## Запуск в Docker (PostgreSQL)
 
 ```bash
-cp .env.example .env     # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, ALLOWED_USER_IDS, POSTGRES_PASSWORD
+cp .env.example .env     # TELEGRAM_BOT_TOKEN, OPENROUTER_API_KEY, ALLOWED_USER_IDS, POSTGRES_PASSWORD
 docker compose up -d --build
 docker compose logs -f bot
 ```
@@ -26,15 +26,15 @@ docker compose logs -f bot
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 sudo apt-get install -y ffmpeg      # видео, кружки, признаки голоса
-cp .env.example .env                # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, ALLOWED_USER_IDS, ...
+cp .env.example .env                # TELEGRAM_BOT_TOKEN, OPENROUTER_API_KEY, ALLOWED_USER_IDS, ...
 python -m columbina.main
 ```
 
 ## Проверки
 
 ```bash
-python -m pytest                     # 85 детерминированных тестов на SQLite, без API
-TEST_DATABASE_URL=postgresql://user@localhost/columbina_test python -m pytest   # +31 тот же набор на PostgreSQL
+python -m pytest                     # 95 детерминированных тестов на SQLite, без API
+TEST_DATABASE_URL=postgresql://user@localhost/columbina_test python -m pytest   # +32 тех же на PostgreSQL
 python scripts/token_report.py       # оценка токенов и стоимости
 python -m evals.run_evals            # живые сценарии характера + модель-судья (нужен ключ, ~$0.5)
 ```

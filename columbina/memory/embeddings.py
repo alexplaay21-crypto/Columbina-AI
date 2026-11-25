@@ -82,6 +82,33 @@ class VoyageEmbedder:
         return out
 
 
+class OpenAICompatibleEmbedder:
+    """POST {base}/embeddings — OpenRouter (baai/bge-m3, qwen/qwen3-embedding-8b, …) или любой совместимый API."""
+
+    def __init__(self, base_url: str, api_key: str, model: str, client: httpx.AsyncClient | None = None):
+        self.url = base_url.rstrip("/") + "/embeddings"
+        self.api_key = api_key
+        self.model = model
+        self.dim: int | None = None  # узнаём по первому ответу
+        self._client = client or httpx.AsyncClient(timeout=60.0)
+
+    async def embed(self, texts: list[str], kind: str = "document") -> list[np.ndarray]:
+        if not texts:
+            return []
+        out: list[np.ndarray] = []
+        for i in range(0, len(texts), 64):
+            r = await self._client.post(
+                self.url, headers={"Authorization": f"Bearer {self.api_key}"},
+                json={"model": self.model, "input": texts[i : i + 64], "encoding_format": "float"},
+            )
+            r.raise_for_status()
+            for d in sorted(r.json()["data"], key=lambda d: d["index"]):
+                v = np.asarray(d["embedding"], dtype=np.float32)
+                out.append(v / (np.linalg.norm(v) or 1.0))
+        self.dim = int(out[0].shape[0])
+        return out
+
+
 class FallbackEmbedder:
     """Пробует основной эмбеддер, при ошибке сети — локальный (с тем же размером недоступно,
     поэтому локальный используется только если основного вектора ещё нет в базе)."""
@@ -103,7 +130,11 @@ def cosine(a: np.ndarray | None, b: np.ndarray | None) -> float:
     return float(np.dot(a, b))
 
 
-def make_embedder(provider: str, voyage_key: str = "", voyage_model: str = "voyage-3.5-lite") -> Embedder:
-    if provider == "voyage" and voyage_key:
-        return VoyageEmbedder(voyage_key, voyage_model)
+def make_embedder(settings) -> Embedder:
+    p = settings.embedding_provider
+    if p == "voyage" and settings.voyage_api_key:
+        return VoyageEmbedder(settings.voyage_api_key, settings.voyage_model)
+    if p == "openrouter" and settings.openrouter_api_key:
+        return OpenAICompatibleEmbedder(settings.openrouter_base_url, settings.openrouter_api_key,
+                                        settings.openrouter_embedding_model)
     return LocalHashEmbedder()

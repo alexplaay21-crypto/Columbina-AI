@@ -1,6 +1,6 @@
 """Живая проверка достоверности персонажа: реальная модель + модель-судья.
 
-    ANTHROPIC_API_KEY=... python -m evals.run_evals [--only id1,id2]
+    OPENROUTER_API_KEY=... python -m evals.run_evals [--only id1,id2]   (или ANTHROPIC_API_KEY)
 
 Каждый сценарий прогоняется через настоящий CognitiveEngine (с памятью в отдельной временной БД),
 затем судья оценивает последний ответ по must/must_not из scenarios.yaml. Результат — таблица
@@ -24,7 +24,7 @@ import yaml
 
 from columbina.cognition.engine import CognitiveEngine
 from columbina.config import ROOT, load_settings
-from columbina.llm.anthropic_provider import AnthropicProvider
+from columbina.llm.factory import make_llm
 from columbina.llm.base import LLMRequest, Message, SystemBlock
 from columbina.memory.embeddings import LocalHashEmbedder
 from columbina.memory.store import MemoryStore, RelationshipRow
@@ -114,8 +114,7 @@ async def main() -> None:
     args = ap.parse_args()
     settings = load_settings()
     persona = load_persona(settings.persona_dir)
-    llm = AnthropicProvider(settings.main_model, settings.background_model, settings.main_effort,
-                            settings.use_refusal_fallbacks)
+    llm = make_llm(settings)
     scenarios = yaml.safe_load((ROOT / "evals" / "scenarios.yaml").read_text(encoding="utf-8"))["scenarios"]
     if args.only:
         keep = set(args.only.split(","))

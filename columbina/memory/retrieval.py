@@ -44,6 +44,8 @@ class MemoryRetriever:
         self._persona_vecs: dict[str, np.ndarray] = {}
 
     async def index_persona(self, chunks: list[KnowledgeChunk]) -> None:
+        if getattr(self.embedder, "dim", None) is None:  # API-эмбеддер: размер узнаём пробным запросом
+            await self.embedder.embed(["проверка"])
         missing: list[KnowledgeChunk] = []
         for c in chunks:
             cached = await self.store.get_persona_embedding(c.id, c.content_hash)
