@@ -10,6 +10,7 @@ import base64
 import io
 import logging
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -55,6 +56,23 @@ def prepare_image(data: bytes) -> tuple[bytes, str]:
 
 
 # ---------------- Речь в текст ----------------
+# Whisper на тишине, музыке и шуме «слышит» титры из обучающих данных. Это не речь собеседника.
+HALLUCINATIONS = re.compile(
+    r"^(?:\W*(?:субтитры (?:создавал|сделал|делал|подготовил)[\w .]*|dimatorzok|"
+    r"редактор субтитров[\w .,]*|корректор[\w .,]*|продолжение следует|спасибо за просмотр|"
+    r"подписывайтесь на (?:канал|наш канал)|thanks for watching|thank you for watching|"
+    r"субтитры by[\w .]*|amara\.org[\w .]*)\W*)+$",
+    re.IGNORECASE,
+)
+
+
+def clean_transcript(text: str | None) -> str | None:
+    if text is None:
+        return None
+    t = text.strip().strip('"«»').strip()
+    return "" if not t or HALLUCINATIONS.match(t) else t
+
+
 class SpeechToText:
     """Whisper-совместимый endpoint: POST {base}/audio/transcriptions (OpenAI, Groq, локальные серверы)."""
 
@@ -82,7 +100,7 @@ class SpeechToText:
                 data=data, files=files,
             )
             r.raise_for_status()
-            return (r.json().get("text") or "").strip()
+            return clean_transcript(r.json().get("text") or "")
         except Exception as e:  # сеть/лимиты — честно сообщим, что голос не разобран
             log.warning("STT failed: %s", e)
             return None
@@ -135,8 +153,7 @@ class OpenRouterSpeechToText:
                     await self.on_usage(float(data["usage"]["cost"]), data)
                 except Exception:
                     pass
-            text = (data["choices"][0]["message"].get("content") or "").strip()
-            return text.strip('"«»').strip()
+            return clean_transcript(data["choices"][0]["message"].get("content") or "")
         except Exception as e:
             log.warning("OpenRouter STT failed: %s", e)
             return None

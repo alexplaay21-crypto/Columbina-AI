@@ -36,7 +36,7 @@ def make_llm(s: Settings) -> LLMProvider:
     main, bg = resolved_models(s)
     if s.llm_provider == "openrouter":
         if not s.openrouter_api_key:
-            raise SystemExit("LLM_PROVIDER=openrouter, но OPENROUTER_API_KEY не задан")
+            raise SystemExit("не задан ключ модели: OPENROUTER_API_KEY или LLM_API_KEY")
         from .openrouter_provider import OpenRouterProvider
 
         return OpenRouterProvider(s.openrouter_api_key, main, bg, s.main_effort, s.openrouter_base_url,

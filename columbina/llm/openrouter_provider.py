@@ -62,6 +62,9 @@ class OpenRouterProvider:
         self.placement = inner_context_placement
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0))
         self.max_retries = max_retries
+        # OpenRouter понимает свои поля (reasoning, models); другие OpenAI-совместимые API
+        # (Gemini, Groq, Mistral…) — только стандартные (reasoning_effort).
+        self.is_openrouter = "openrouter.ai" in self.base_url
 
     def model_for(self, tier: str) -> str:
         return self.main_model if tier == "main" else self.background_model
@@ -152,10 +155,14 @@ class OpenRouterProvider:
             "model": model,
             "messages": self.build_messages(req, model),
             "max_tokens": req.max_tokens,
-            "reasoning": {"effort": req.effort or (self.main_effort if req.tier == "main" else "low")},
         }
-        if req.tier == "main" and self.fallback_models:
-            params["models"] = [model, *self.fallback_models]
+        effort = req.effort or (self.main_effort if req.tier == "main" else "low")
+        if self.is_openrouter:
+            params["reasoning"] = {"effort": effort}
+            if req.tier == "main" and self.fallback_models:
+                params["models"] = [model, *self.fallback_models]
+        elif effort in ("low", "medium", "high"):
+            params["reasoning_effort"] = effort
         if req.tools:
             params["tools"] = [
                 {"type": "function", "function": {"name": t.name, "description": t.description,
@@ -191,9 +198,13 @@ class OpenRouterProvider:
                 data = r.json()
             except ValueError:
                 raise LLMError(f"http {r.status_code}: не JSON", retryable=r.status_code >= 500)
+            if isinstance(data, list):  # Gemini отдаёт ошибку списком: [{"error": {...}}]
+                data = data[0] if data and isinstance(data[0], dict) else {"error": {"message": str(data)}}
             if r.status_code >= 400 or (isinstance(data, dict) and "error" in data and "choices" not in data):
                 err = data.get("error", {}) if isinstance(data, dict) else {}
-                msg = err.get("message") if isinstance(err, dict) else str(err)
+                msg = (err.get("message") or err.get("status")) if isinstance(err, dict) else str(err)
+                if not msg:
+                    msg = r.text[:300]
                 code = r.status_code if r.status_code >= 400 else int(err.get("code", 500) or 500)
                 hint = {401: " (неверный OPENROUTER_API_KEY)", 402: " (не хватает баланса OpenRouter или месячного лимита ключа)",
                         403: " (ключ не имеет доступа к модели или модерация)",
@@ -208,6 +219,7 @@ class OpenRouterProvider:
         """Запрос без необязательных опций — на случай, если провайдер модели их не принимает (HTTP 400)."""
         p = json.loads(json.dumps(params))
         p.pop("reasoning", None)
+        p.pop("reasoning_effort", None)
         p.pop("models", None)
         for m in p["messages"]:
             if isinstance(m.get("content"), list):
@@ -217,7 +229,25 @@ class OpenRouterProvider:
         return p
 
     async def complete(self, req: LLMRequest) -> LLMResponse:
+        try:
+            return await self._complete(req, None)
+        except LLMError as e:
+            # Вне OpenRouter запасные модели перебираем сами (OpenRouter делает это на сервере через `models`).
+            if self.is_openrouter or req.tier != "main" or not self.fallback_models or not e.retryable:
+                raise
+            last = e
+            for fb in self.fallback_models:
+                log.warning("%s недоступна (%s) — пробую %s", self.main_model, e, fb)
+                try:
+                    return await self._complete(req, fb)
+                except LLMError as e2:
+                    last = e2
+            raise last
+
+    async def _complete(self, req: LLMRequest, model_override: str | None) -> LLMResponse:
         params = self.build_params(req)
+        if model_override:
+            params["model"] = model_override
         try:
             data = await self._post(params)
         except LLMError as e:

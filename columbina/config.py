@@ -52,10 +52,12 @@ class Settings:
     debounce_seconds: float = field(default_factory=lambda: _env_float("DEBOUNCE_SECONDS", 2.5))
 
     # LLM: "openrouter" | "anthropic" (по умолчанию openrouter, если задан OPENROUTER_API_KEY)
+    # LLM_API_KEY / LLM_BASE_URL — то же самое для любого OpenAI-совместимого API (Gemini, Groq, Mistral…)
     llm_provider: str = field(default_factory=lambda: _env(
-        "LLM_PROVIDER", "openrouter" if _env("OPENROUTER_API_KEY") else "anthropic").lower())
-    openrouter_api_key: str = field(default_factory=lambda: _env("OPENROUTER_API_KEY"))
-    openrouter_base_url: str = field(default_factory=lambda: _env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+        "LLM_PROVIDER", "openrouter" if (_env("OPENROUTER_API_KEY") or _env("LLM_API_KEY")) else "anthropic").lower())
+    openrouter_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY") or _env("OPENROUTER_API_KEY"))
+    openrouter_base_url: str = field(default_factory=lambda: _env("LLM_BASE_URL") or _env(
+        "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
     openrouter_embedding_model: str = field(default_factory=lambda: _env("OPENROUTER_EMBEDDING_MODEL", "baai/bge-m3"))
     main_fallback_models: tuple[str, ...] = field(default_factory=lambda: tuple(
         m.strip() for m in _env("MAIN_FALLBACK_MODELS").split(",") if m.strip()))

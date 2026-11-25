@@ -242,3 +242,49 @@ async def test_summarization_archives_old(engine, fake_llm, store):
     await engine.drain()
     assert "Резюме" in await store.get_summary(1)
     assert len(await store.active_messages(1)) <= 6
+
+
+def test_whisper_hallucinations_filtered():
+    from columbina.media.processors import clean_transcript
+
+    for junk in ["Субтитры создавал DimaTorzok", "Продолжение следует...", "Спасибо за просмотр!",
+                 "Редактор субтитров А.Синецкая Корректор А.Егорова", "«Thanks for watching!»"]:
+        assert clean_transcript(junk) == "", junk
+    assert clean_transcript("Короче, я дома, всё нормально") == "Короче, я дома, всё нормально"
+    assert clean_transcript("спасибо за просмотр фильма, он был классный") != ""
+    assert clean_transcript(None) is None
+
+
+def test_source_world_names_blocked(persona):
+    g = StyleGuard(persona.style)
+    for bad in ["Я Третья из Предвестников Фатуи.", "Когда-то я служила Царице в Снежной.", "Как в Genshin",
+                "Дотторе был опасен"]:
+        assert "source_world" in g.check(bad).hard_violations, bad
+    for ok in ["Я служила Северному Двору.", "Снежный вечер", "Снег сегодня мягкий.", "Владычица Севера",
+               "Сегодня снежная погода.", "Луна — царица ночи, говорят."]:
+        assert "source_world" not in g.check(ok).hard_violations, ok
+
+
+async def test_openai_compatible_fallback_models():
+    import httpx, json as _json
+
+    from columbina.llm.base import LLMRequest, Message
+    from columbina.llm.openrouter_provider import OpenRouterProvider
+
+    seen = []
+
+    def handler(request):
+        body = _json.loads(request.content)
+        seen.append(body)
+        if body["model"] == "gemini-3.5-flash":
+            return httpx.Response(503, json=[{"error": {"code": 503, "message": "The model is overloaded."}}])
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Да."}, "finish_reason": "stop"}],
+                                         "usage": {"prompt_tokens": 5, "completion_tokens": 1}})
+
+    p = OpenRouterProvider("k", "gemini-3.5-flash", "gemini-3.5-flash-lite",
+                           base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+                           fallback_models=["gemini-3.5-flash-lite"], max_retries=0,
+                           client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    r = await p.complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))
+    assert r.text == "Да." and [b["model"] for b in seen] == ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+    assert "reasoning" not in seen[0] and "models" not in seen[0] and seen[0]["reasoning_effort"] == "low"
