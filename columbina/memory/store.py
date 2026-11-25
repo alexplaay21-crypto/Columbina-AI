@@ -149,6 +149,15 @@ CREATE TABLE IF NOT EXISTS usage (
     created_at {REAL} NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_user ON usage(user_id, created_at);
+CREATE TABLE IF NOT EXISTS web_log (
+    id {PK},
+    user_id {BIGINT},
+    tool TEXT NOT NULL,
+    arg TEXT,
+    ok INTEGER NOT NULL DEFAULT 1,
+    created_at {REAL} NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_web_log_user ON web_log(user_id, created_at);
 CREATE TABLE IF NOT EXISTS persona_embeddings (
     chunk_id TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
@@ -162,7 +171,7 @@ TYPES = {
 }
 
 ALL_TABLES = ["users", "messages", "summaries", "episodes", "facts", "relationship", "emotion_state", "events",
-              "threads", "notes", "initiatives", "usage", "persona_embeddings"]
+              "threads", "notes", "initiatives", "usage", "web_log", "persona_embeddings"]
 
 
 def schema_for(dialect: str) -> str:
@@ -535,6 +544,19 @@ class MemoryStore:
             (float(since),),
         )
 
+    # ---------- web ----------
+    async def log_web(self, user_id: int | None, tool: str, arg: str, ok: bool) -> None:
+        await self.d.execute("INSERT INTO web_log(user_id, tool, arg, ok, created_at) VALUES (?,?,?,?,?)",
+                             (user_id, tool, arg, int(ok), time.time()))
+
+    async def web_count_since(self, user_id: int | None, since: float) -> int:
+        r = await self.d.fetchone("SELECT COUNT(*) AS n FROM web_log WHERE user_id=? AND created_at>=?",
+                                  (user_id, float(since)))
+        return int(r["n"])
+
+    async def web_recent(self, user_id: int | None, n: int = 10) -> list[dict[str, Any]]:
+        return await self.d.fetchall("SELECT * FROM web_log WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, n))
+
     # ---------- persona embeddings cache ----------
     async def get_persona_embedding(self, chunk_id: str, content_hash: str) -> np.ndarray | None:
         r = await self.d.fetchone(
@@ -552,5 +574,5 @@ class MemoryStore:
     # ---------- privacy ----------
     async def forget_user(self, user_id: int) -> None:
         for table in ("messages", "summaries", "episodes", "facts", "relationship", "emotion_state",
-                      "events", "threads", "notes", "initiatives"):
+                      "events", "threads", "notes", "initiatives", "web_log"):
             await self.d.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))

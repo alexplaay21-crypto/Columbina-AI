@@ -81,6 +81,7 @@ class Reply:
     reaction: str | None = None
     cost_usd: float = 0.0
     quote: bool = False  # ответить «реплаем» на сообщение собеседника
+    sources: str | None = None  # «Источники: …» отдельным сообщением, если она пользовалась интернетом
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -94,6 +95,7 @@ class CognitiveEngine:
         embedder: Embedder,
         weather: WeatherService | None = None,
         vision=None,
+        web_tools=None,
     ):
         self.s = settings
         self.persona = persona
@@ -102,6 +104,7 @@ class CognitiveEngine:
         self.embedder = embedder
         self.weather = weather
         self.vision = vision  # VisionAdapter: зрение для моделей без зрения
+        self.web = web_tools  # WebTools: поиск, чтение страниц, открытые API (None — интернет выключен)
         self.emotions = EmotionModel(persona.emotions)
         self.relationship = RelationshipModel(persona.relationship)
         self.abilities = AbilitiesEngine(persona.abilities)
@@ -301,7 +304,7 @@ class CognitiveEngine:
         messages.append(Message.text("system", inner))
 
         try:
-            reply_text, cost, tool_notes = await self._generate(user_id, user, sit, messages)
+            reply_text, cost, tool_notes, budget = await self._generate(user_id, user, sit, messages)
         except LLMError as e:
             log.warning("LLM failure for %s: %s", user_id, e)
             await self.store.add_message(user_id, "user", history_text, at=ts)
@@ -333,8 +336,11 @@ class CognitiveEngine:
         images = [p for pc in percepts for p in pc.parts if isinstance(p, ImagePart)]
         self.spawn(self._after_turn(user_id, user_msg_id, history_text, user_text, stored_reply,
                                     appr.emotion_events + appr.relationship_events, images, ts))
+        from ..web.tools import sources_message
+
         return Reply(parts=parsed.parts, reaction=parsed.reaction, cost_usd=cost,
                      quote=any(p.kind == "reply" for p in percepts),
+                     sources=sources_message(budget, reply_text) if budget else None,
                      debug={"inner_context": inner, "tool_notes": tool_notes, "stage": rel.stage, "emotion": emo_text})
 
     EVENT_REACTIONS = {
@@ -366,35 +372,48 @@ class CognitiveEngine:
             msgs[-1].cache_breakpoint = True
         return msgs
 
+    def _tools(self) -> list[ToolSpec]:
+        return [LEAVE_NOTE_TOOL] + (self.web.specs if self.web else [])
+
     async def _generate(self, user_id: int, user: UserProfile, sit: Situation,
-                        messages: list[Message]) -> tuple[str, float, list[str]]:
+                        messages: list[Message]):
+        from ..web.tools import TurnBudget
+
         total_cost = 0.0
         tool_notes: list[str] = []
+        budget = TurnBudget()
+        tools = self._tools()
         req = LLMRequest(system=self.system_blocks, messages=messages, tier="main",
-                         max_tokens=self.s.main_max_tokens, tools=[LEAVE_NOTE_TOOL], purpose="chat")
+                         max_tokens=self.s.main_max_tokens, tools=tools, purpose="chat")
         resp = await self.llm.complete(req)
         await self._record_usage(user_id, "chat", resp)
         total_cost += resp.cost_usd
 
-        # Цикл инструментов (максимум 2 круга).
+        # Цикл инструментов: она сама решает, искать ли, что читать и когда хватит. Жёсткий предел кругов.
         rounds = 0
-        while resp.tool_calls and rounds < 2:
+        while resp.tool_calls and rounds < self.s.max_tool_rounds:
             rounds += 1
             results = []
             for call in resp.tool_calls:
-                results.append(await self._run_tool(user_id, user, sit, call.name, call.input, call.id, tool_notes))
+                results.append(await self._run_tool(user_id, user, sit, call.name, call.input, call.id,
+                                                    tool_notes, budget))
             messages = messages + [
                 Message(role="assistant", provider_raw=resp.raw_assistant),
                 Message(role="user", tool_results=results),
             ]
+            last_round = rounds >= self.s.max_tool_rounds
+            if last_round:
+                messages = messages + [Message.text("system", "Инструменты закончились: ответь собеседнику сейчас "
+                                                              "тем, что уже знаешь и нашла.")]
             resp = await self.llm.complete(LLMRequest(system=self.system_blocks, messages=messages, tier="main",
-                                                      max_tokens=self.s.main_max_tokens, tools=[LEAVE_NOTE_TOOL],
-                                                      purpose="chat_tool"))
+                                                      max_tokens=self.s.main_max_tokens,
+                                                      tools=[] if last_round else tools, purpose="chat_tool"))
             await self._record_usage(user_id, "chat_tool", resp)
             total_cost += resp.cost_usd
+        tool_notes.extend(budget.used)
 
         if resp.stop_reason == "refusal":
-            return "Не хочу об этом.", total_cost, tool_notes
+            return "Не хочу об этом.", total_cost, tool_notes, budget
 
         verdict = self.style.check(resp.text)
         if verdict.hard_violations:
@@ -419,7 +438,7 @@ class CognitiveEngine:
             else:
                 verdict = verdict2
                 verdict.fixed_text = self._strip_violating_sentences(verdict2.fixed_text)
-        return verdict.fixed_text, total_cost, tool_notes
+        return verdict.fixed_text, total_cost, tool_notes, budget
 
     def _strip_violating_sentences(self, text: str) -> str:
         sentences = re.split(r"(?<=[.!?…])\s+", text)
@@ -427,7 +446,9 @@ class CognitiveEngine:
         return " ".join(keep).strip() or "Хорошо."
 
     async def _run_tool(self, user_id: int, user: UserProfile, sit: Situation, name: str, args: dict,
-                        call_id: str, notes_out: list[str]) -> ToolResult:
+                        call_id: str, notes_out: list[str], budget=None) -> ToolResult:
+        if self.web and name in {"web_search", "read_url", "http_get"} and budget is not None:
+            return await self.web.run(name, args, call_id, budget, user_id)
         if name != "leave_note":
             return ToolResult(call_id, f"неизвестный инструмент {name}", is_error=True)
         text = str(args.get("text", "")).strip()

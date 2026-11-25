@@ -70,6 +70,11 @@ class Settings:
     background_base_url: str = field(default_factory=lambda: _env("BACKGROUND_BASE_URL"))
     background_api_key: str = field(default_factory=lambda: _env("BACKGROUND_API_KEY"))
     llm_timeout: float = field(default_factory=lambda: _env_float("LLM_TIMEOUT", 60.0))
+    llm_max_wait: float = field(default_factory=lambda: _env_float("LLM_MAX_WAIT", 15.0))
+    # Запасной сервис целиком (например Gemini, если у Groq кончился лимит)
+    secondary_base_url: str = field(default_factory=lambda: _env("SECONDARY_BASE_URL"))
+    secondary_api_key: str = field(default_factory=lambda: _env("SECONDARY_API_KEY"))
+    secondary_model: str = field(default_factory=lambda: _env("SECONDARY_MODEL"))
     # Зрение: auto — по названию модели; если основная не видит картинки, их описывает VISION_MODEL
     main_vision: str = field(default_factory=lambda: _env("MAIN_VISION", "auto").lower())
     main_pdf: str = field(default_factory=lambda: _env("MAIN_PDF", "auto").lower())
@@ -116,6 +121,20 @@ class Settings:
 
     # Стоимость
     daily_budget_usd: float = field(default_factory=lambda: _env_float("DAILY_BUDGET_USD_PER_USER", 3.0))
+
+    # Интернет-инструменты (модель сама решает, когда искать)
+    web_enabled: bool = field(default_factory=lambda: _env_bool("WEB_ENABLED", True))
+    tavily_api_key: str = field(default_factory=lambda: _env("TAVILY_API_KEY"))
+    jina_api_key: str = field(default_factory=lambda: _env("JINA_API_KEY"))
+    brave_api_key: str = field(default_factory=lambda: _env("BRAVE_API_KEY"))
+    searxng_url: str = field(default_factory=lambda: _env("SEARXNG_URL"))
+    jina_enabled: bool = field(default_factory=lambda: _env_bool("JINA_ENABLED", True))
+    web_search_region: str = field(default_factory=lambda: _env("WEB_SEARCH_REGION", "ru-ru"))
+    wikipedia_lang: str = field(default_factory=lambda: _env("WIKIPEDIA_LANG", "ru"))
+    web_daily_limit: int = field(default_factory=lambda: _env_int("WEB_DAILY_LIMIT_PER_USER", 60))
+    web_page_chars: int = field(default_factory=lambda: _env_int("WEB_PAGE_CHARS", 6000))
+    web_timeout: float = field(default_factory=lambda: _env_float("WEB_TIMEOUT", 15.0))
+    max_tool_rounds: int = field(default_factory=lambda: _env_int("MAX_TOOL_ROUNDS", 5))
 
     # Ссылки
     link_fetch_enabled: bool = field(default_factory=lambda: _env_bool("LINK_FETCH_ENABLED", True))

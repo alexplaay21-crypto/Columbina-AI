@@ -53,6 +53,7 @@ class OpenRouterProvider:
         client: httpx.AsyncClient | None = None,
         max_retries: int = 2,
         timeout: float = 60.0,
+        max_wait: float = 15.0,
     ):
         self.api_key = api_key
         self.main_model = main_model
@@ -63,6 +64,7 @@ class OpenRouterProvider:
         self.placement = inner_context_placement
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0))
         self.max_retries = max_retries
+        self.max_wait = max_wait
         # OpenRouter понимает свои поля (reasoning, models); другие OpenAI-совместимые API
         # (Gemini, Groq, Mistral…) — только стандартные (reasoning_effort).
         self.is_openrouter = "openrouter.ai" in self.base_url
@@ -196,7 +198,7 @@ class OpenRouterProvider:
                     wait = float(r.headers.get("retry-after", delay))
                 except ValueError:
                     wait = delay
-                if wait > 8:  # долго ждать нельзя — пусть сработает запасная модель
+                if wait > self.max_wait:  # долго ждать нельзя — пусть сработает запасная модель
                     break
                 await asyncio.sleep(wait)
                 delay *= 2

@@ -301,6 +301,10 @@ class TelegramInterface:
             # Если собеседник отвечал на конкретное сообщение — отвечаем «реплаем» на его сообщение.
             quoted = next((m for m, _ in reversed(pend.items) if m.reply_to_message), None) if reply.quote else None
             await self.send_parts(chat_id, reply.parts, reply_to=quoted.message_id if quoted else None)
+        if reply.sources:
+            from aiogram.types import LinkPreviewOptions
+
+            await self.bot.send_message(chat_id, reply.sources, link_preview_options=LinkPreviewOptions(is_disabled=True))
         if uid in self.s.admin_user_ids:
             note = admin_error_note(reply.debug)
             if reply.debug.get("over_budget"):

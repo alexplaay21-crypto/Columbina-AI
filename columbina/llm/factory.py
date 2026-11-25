@@ -40,7 +40,13 @@ def make_llm(s: Settings) -> LLMProvider:
         from .openrouter_provider import OpenRouterProvider
 
         primary = OpenRouterProvider(s.openrouter_api_key, main, bg, s.main_effort, s.openrouter_base_url,
-                                     list(s.main_fallback_models), s.inner_context_placement, timeout=s.llm_timeout)
+                                     list(s.main_fallback_models), s.inner_context_placement, timeout=s.llm_timeout,
+                                     max_wait=s.llm_max_wait)
+        if s.secondary_base_url and s.secondary_api_key and s.secondary_model:
+            secondary = OpenRouterProvider(s.secondary_api_key, s.secondary_model, s.secondary_model, s.main_effort,
+                                           s.secondary_base_url, [], s.inner_context_placement, timeout=s.llm_timeout,
+                                           max_wait=s.llm_max_wait)
+            primary = ChainProvider([primary, secondary])
         if s.background_api_key and s.background_base_url:
             bg_provider = OpenRouterProvider(s.background_api_key, bg, bg, "low", s.background_base_url,
                                              [], s.inner_context_placement, timeout=s.llm_timeout)
@@ -51,6 +57,26 @@ def make_llm(s: Settings) -> LLMProvider:
 
         return AnthropicProvider(main, bg, s.main_effort, s.use_refusal_fallbacks)
     raise SystemExit(f"неизвестный LLM_PROVIDER={s.llm_provider}")
+
+
+class ChainProvider:
+    """Если основной сервис недоступен (лимит, перегрузка, сеть) — тот же запрос уходит в следующий."""
+
+    def __init__(self, providers: list[LLMProvider]):
+        self.providers = providers
+
+    async def complete(self, request):
+        from .base import LLMError
+
+        last: Exception | None = None
+        for p in self.providers:
+            try:
+                return await p.complete(request)
+            except LLMError as e:
+                if not e.retryable:
+                    raise
+                last = e
+        raise last  # type: ignore[misc]
 
 
 class RoutingProvider:
@@ -83,3 +109,34 @@ def make_vision(s: Settings):
                                            s.vision_model or "google/gemini-3.1-flash-lite", "low",
                                            s.openrouter_base_url, timeout=s.llm_timeout)
     return VisionAdapter(has_vision, has_pdf, describer)
+
+
+def make_web_tools(s: Settings, store=None):
+    """Интернет: Tavily (если есть ключ) → DuckDuckGo; Wikipedia как второй источник; Jina Reader → прямое чтение."""
+    if not s.web_enabled:
+        return None
+    import httpx
+
+    from ..media.links import SafeFetcher
+    from ..web.reader import WebReader
+    from ..web.search import DuckDuckGoSearch, TavilySearch, WebSearch, WikipediaSearch
+    from ..web.tools import WebTools
+
+    verify = s.link_ca_bundle or True
+    client = httpx.AsyncClient(timeout=s.web_timeout, follow_redirects=True, verify=verify)
+    from ..web.search import BraveSearch, JinaSearch, SearxngSearch
+
+    providers = []
+    if s.tavily_api_key:
+        providers.append(TavilySearch(s.tavily_api_key, client))
+    if s.brave_api_key:
+        providers.append(BraveSearch(s.brave_api_key, client))
+    if s.jina_api_key:
+        providers.append(JinaSearch(s.jina_api_key, client))
+    if s.searxng_url:
+        providers.append(SearxngSearch(s.searxng_url, client))
+    providers.append(DuckDuckGoSearch(client, s.web_search_region))
+    fetcher = SafeFetcher(timeout=s.web_timeout, max_chars=s.web_page_chars, verify=verify)
+    reader = WebReader(client, fetcher, s.jina_api_key, s.web_page_chars, use_jina=s.jina_enabled)
+    return WebTools(WebSearch(providers, WikipediaSearch(client, s.wikipedia_lang)), reader, fetcher, store,
+                    s.web_daily_limit)

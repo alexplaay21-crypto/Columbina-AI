@@ -15,7 +15,7 @@ from .cognition.engine import CognitiveEngine
 from .config import load_settings, storage_target
 from .initiative.engine import InitiativeEngine
 from .initiative.scheduler import Scheduler
-from .llm.factory import make_llm, make_vision, resolved_models
+from .llm.factory import make_llm, make_vision, make_web_tools, resolved_models
 from .media.links import SafeFetcher
 from .media.processors import MediaProcessor, OpenRouterSpeechToText, SpeechToText
 from .memory.embeddings import make_embedder
@@ -31,7 +31,8 @@ async def build(settings=None):
     embedder = make_embedder(s)
     llm = make_llm(s)
     weather = WeatherService()
-    engine = CognitiveEngine(s, persona, store, llm, embedder, weather, vision=make_vision(s))
+    web = make_web_tools(s, store)
+    engine = CognitiveEngine(s, persona, store, llm, embedder, weather, vision=make_vision(s), web_tools=web)
     try:
         await engine.setup()
     except BaseException as e:
@@ -54,7 +55,8 @@ async def build(settings=None):
         stt.on_usage = log_stt
     else:
         stt = SpeechToText(s.stt_base_url, s.stt_api_key, s.stt_model)
-    media = MediaProcessor(stt, SafeFetcher(verify=s.link_ca_bundle or True), s.media_tmp_dir, s.link_fetch_enabled)
+    link_reader = web.reader if web else SafeFetcher(verify=s.link_ca_bundle or True)
+    media = MediaProcessor(stt, link_reader, s.media_tmp_dir, s.link_fetch_enabled)
     main_m, bg_m = resolved_models(s)
     logging.getLogger(__name__).info("LLM: %s (%s / %s), embeddings: %s, STT: %s, storage: %s",
                                      s.llm_provider, main_m, bg_m, s.embedding_provider, s.stt_provider,
