@@ -248,3 +248,13 @@ async def test_402_low_credits_retries_with_smaller_max_tokens():
 
     with pytest.raises(LLMError):
         await provider(rec2).complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))
+
+
+async def test_routing_provider_sends_background_elsewhere():
+    from columbina.llm.factory import RoutingProvider
+    from columbina.llm.fake import FakeProvider
+
+    main, bg = FakeProvider(lambda r: "main"), FakeProvider(lambda r: "bg")
+    rp = RoutingProvider(main, bg)
+    assert (await rp.complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))).text == "main"
+    assert (await rp.complete(LLMRequest(system=[], messages=[Message.text("user", "a")], tier="background"))).text == "bg"

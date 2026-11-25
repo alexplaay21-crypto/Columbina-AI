@@ -39,10 +39,25 @@ def make_llm(s: Settings) -> LLMProvider:
             raise SystemExit("не задан ключ модели: OPENROUTER_API_KEY или LLM_API_KEY")
         from .openrouter_provider import OpenRouterProvider
 
-        return OpenRouterProvider(s.openrouter_api_key, main, bg, s.main_effort, s.openrouter_base_url,
-                                  list(s.main_fallback_models), s.inner_context_placement)
+        primary = OpenRouterProvider(s.openrouter_api_key, main, bg, s.main_effort, s.openrouter_base_url,
+                                     list(s.main_fallback_models), s.inner_context_placement, timeout=s.llm_timeout)
+        if s.background_api_key and s.background_base_url:
+            bg_provider = OpenRouterProvider(s.background_api_key, bg, bg, "low", s.background_base_url,
+                                             [], s.inner_context_placement, timeout=s.llm_timeout)
+            return RoutingProvider(primary, bg_provider)
+        return primary
     if s.llm_provider == "anthropic":
         from .anthropic_provider import AnthropicProvider
 
         return AnthropicProvider(main, bg, s.main_effort, s.use_refusal_fallbacks)
     raise SystemExit(f"неизвестный LLM_PROVIDER={s.llm_provider}")
+
+
+class RoutingProvider:
+    """Основной ответ — один сервис, фоновые задачи (память, резюме) — другой."""
+
+    def __init__(self, main: LLMProvider, background: LLMProvider):
+        self.main, self.background = main, background
+
+    async def complete(self, request):
+        return await (self.background if request.tier == "background" else self.main).complete(request)

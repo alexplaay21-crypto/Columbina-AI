@@ -51,7 +51,8 @@ class OpenRouterProvider:
         fallback_models: list[str] | None = None,
         inner_context_placement: str = "user",  # user | system
         client: httpx.AsyncClient | None = None,
-        max_retries: int = 3,
+        max_retries: int = 2,
+        timeout: float = 60.0,
     ):
         self.api_key = api_key
         self.main_model = main_model
@@ -60,7 +61,7 @@ class OpenRouterProvider:
         self.base_url = base_url.rstrip("/")
         self.fallback_models = [m for m in (fallback_models or []) if m]
         self.placement = inner_context_placement
-        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0))
+        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0))
         self.max_retries = max_retries
         # OpenRouter понимает свои поля (reasoning, models); другие OpenAI-совместимые API
         # (Gemini, Groq, Mistral…) — только стандартные (reasoning_effort).
@@ -191,7 +192,13 @@ class OpenRouterProvider:
                     continue
                 raise LLMError(f"connection error: {e}", retryable=True) from e
             if r.status_code in (408, 429, 500, 502, 503, 504) and attempt < self.max_retries:
-                await asyncio.sleep(float(r.headers.get("retry-after", delay)))
+                try:
+                    wait = float(r.headers.get("retry-after", delay))
+                except ValueError:
+                    wait = delay
+                if wait > 8:  # долго ждать нельзя — пусть сработает запасная модель
+                    break
+                await asyncio.sleep(wait)
                 delay *= 2
                 continue
             try:
@@ -212,7 +219,7 @@ class OpenRouterProvider:
                 raise LLMError(f"openrouter {code}: {msg}{hint}", retryable=code in (408, 429) or code >= 500,
                                status=code)
             return data
-        raise LLMError("retries exhausted")
+        raise LLMError(f"HTTP {r.status_code}: перегружено или лимит запросов", retryable=True, status=r.status_code)
 
     @staticmethod
     def _simplified(params: dict[str, Any]) -> dict[str, Any]:

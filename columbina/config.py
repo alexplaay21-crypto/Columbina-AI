@@ -49,7 +49,7 @@ class Settings:
     allowed_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ALLOWED_USER_IDS"))
     admin_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ADMIN_USER_IDS"))
     mood_command: str = field(default_factory=lambda: _env("MOOD_COMMAND", "all").lower())  # all | admin
-    debounce_seconds: float = field(default_factory=lambda: _env_float("DEBOUNCE_SECONDS", 2.5))
+    debounce_seconds: float = field(default_factory=lambda: _env_float("DEBOUNCE_SECONDS", 1.5))
 
     # LLM: "openrouter" | "anthropic" (по умолчанию openrouter, если задан OPENROUTER_API_KEY)
     # LLM_API_KEY / LLM_BASE_URL — то же самое для любого OpenAI-совместимого API (Gemini, Groq, Mistral…)
@@ -66,6 +66,10 @@ class Settings:
     inner_context_placement: str = field(default_factory=lambda: _env("INNER_CONTEXT_PLACEMENT", "user"))
     # Пусто — по провайдеру: anthropic/claude-opus-5.5 и anthropic/claude-haiku-5.5 (OpenRouter)
     # или claude-opus-5-5 и claude-haiku-5-5 (Anthropic)
+    # Фоновые задачи на отдельном OpenAI-совместимом сервисе (например Groq), чтобы не тратить лимит основного
+    background_base_url: str = field(default_factory=lambda: _env("BACKGROUND_BASE_URL"))
+    background_api_key: str = field(default_factory=lambda: _env("BACKGROUND_API_KEY"))
+    llm_timeout: float = field(default_factory=lambda: _env_float("LLM_TIMEOUT", 60.0))
     main_model: str = field(default_factory=lambda: _env("MAIN_MODEL"))
     background_model: str = field(default_factory=lambda: _env("BACKGROUND_MODEL"))
     main_effort: str = field(default_factory=lambda: _env("MAIN_EFFORT", "low"))
