@@ -11,8 +11,9 @@ log = logging.getLogger(__name__)
 
 
 class Scheduler:
-    def __init__(self, initiative: InitiativeEngine, send, interval_seconds: int = 600):
+    def __init__(self, initiative: InitiativeEngine, send, interval_seconds: int = 600, inner=None):
         self.initiative = initiative
+        self.inner = inner
         self.send = send
         self.interval = interval_seconds
         self._task: asyncio.Task | None = None
@@ -26,6 +27,14 @@ class Scheduler:
                     log.info("initiative: sent %d", n)
             except Exception:
                 log.exception("scheduler tick failed")
+            if self.inner is not None:  # внутренняя жизнь — по одному собеседнику за раз, в бюджете
+                try:
+                    for user in await self.initiative.store.list_users():
+                        done = await self.inner.tick(user.user_id)
+                        if done:
+                            log.info("inner life %s: %s", user.user_id, done)
+                except Exception:
+                    log.exception("inner life tick failed")
             await asyncio.sleep(self.interval)
 
     def start(self) -> None:

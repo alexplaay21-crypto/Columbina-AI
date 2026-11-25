@@ -38,6 +38,7 @@ REFLECTION_SYSTEM = """Ты — внутренний наблюдатель Ко
 - user_timezone: если из слов собеседника ясно, где он живёт или сколько у него сейчас времени, — часовой пояс
   IANA («Asia/Novosibirsk», «Europe/Moscow»). Иначе пустая строка. user_city — город, если назван.
 - facts[].certain: true — собеседник сказал прямо; false — это твоя догадка.
+- topics: 0–3 коротких темы разговора, которые могут стать интересом (например «механические часы», «Исландия»).
 - her_life: если Коломбина рассказала о событии в своей собственной жизни (что делала, что случилось с духами,
   неудачный пирог) — коротко зафиксируй это одной фразой, чтобы она потом себе не противоречила. Иначе пустая строка.
 """
@@ -54,7 +55,7 @@ def reflection_schema(emotion_events: list[str], relationship_events: list[str])
         "additionalProperties": False,
         "required": ["facts", "forget_keys", "episode", "emotion_events", "relationship_events",
                      "open_threads", "closed_thread_ids", "media_description", "user_mood", "her_life",
-                     "user_timezone", "user_city"],
+                     "user_timezone", "user_city", "topics"],
         "properties": {
             "facts": {
                 "type": "array",
@@ -88,6 +89,7 @@ def reflection_schema(emotion_events: list[str], relationship_events: list[str])
             "her_life": {"type": "string"},
             "user_timezone": {"type": "string"},
             "user_city": {"type": "string"},
+            "topics": {"type": "array", "items": {"type": "string"}},
         },
     }
 
@@ -106,6 +108,7 @@ class ReflectionResult:
     her_life: str = ""
     user_timezone: str = ""
     user_city: str = ""
+    topics: list[str] = field(default_factory=list)
 
     @classmethod
     def parse(cls, raw: str) -> "ReflectionResult":
@@ -127,6 +130,7 @@ class ReflectionResult:
             her_life=(data.get("her_life") or "")[:300],
             user_timezone=(data.get("user_timezone") or "")[:60],
             user_city=(data.get("user_city") or "")[:80],
+            topics=[t for t in data.get("topics", []) if isinstance(t, str)][:3],
         )
 
 

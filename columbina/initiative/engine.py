@@ -90,6 +90,19 @@ class InitiativeEngine:
                 out.append(Candidate("absence",
                                      f"собеседник молчит {int(days)} дн.; напиши одно лёгкое сообщение о своём, "
                                      "без упрёков и без «почему молчишь»", 2.5 + min(2.0, days / 7)))
+        if rel.stage >= 2 and not sent_within("discovery", 2):
+            for f in await self.store.unshared_findings(user.user_id):
+                fact, _, hint = f["text"].partition(" || Как поделиться: ")
+                out.append(Candidate("discovery", (
+                    f"ты сама прочитала кое-что интересное ({f.get('source_title') or 'источник'}: {f.get('source_url')}): "
+                    f"{fact}. Поделись находкой коротко и по-своему" + (f", например так: {hint}" if hint else "")
+                    + ". Можно дать ссылку. Не выдумывай сверх прочитанного"), 3.2, f["id"]))
+                break
+        if rel.stage >= 3 and not sent_within("dream", 5):
+            dream = await self.store.diary(user.user_id, "dream", limit=1)
+            if dream and ts - dream[0]["created_at"] < 10 * 3600:
+                out.append(Candidate("dream", "тебе этой ночью снился сон: " + dream[0]["text"][:400]
+                                     + ". Можно коротко рассказать его, как рассказывают сон утром (это сон)", 2.2))
         if rel.stage >= 3 and user.last_user_msg_at and (ts - user.last_user_msg_at) > 2 * 86400:
             facts = await self.store.facts(user.user_id)
             if facts and not sent_within("gift", 7):
@@ -100,6 +113,11 @@ class InitiativeEngine:
 
     async def decide(self, user: UserProfile, now: datetime) -> Candidate | None:
         mode = user.initiative_mode or "normal"
+        if (await self.store.get_setting(user.user_id, "paused", "0")) == "1":
+            mode = "off"  # /pause: только записки, о которых просили
+        until = float(await self.store.get_setting(user.user_id, "quiet_until", "0") or 0)
+        if until and now.timestamp() < until:
+            return None  # /quiet: тишина до /wake или до утра
         cands = await self.candidates(user, now)
         if not cands:
             return None
@@ -140,6 +158,8 @@ class InitiativeEngine:
                     await self.store.set_note_status(cand.ref_id, "done")
                 if cand.kind == "thread" and cand.ref_id:
                     await self.store.close_thread(cand.ref_id, "asked")
+                if cand.kind == "discovery" and cand.ref_id:
+                    await self.store.mark_knowledge(cand.ref_id, shared=True)
             except Exception:
                 log.exception("initiative tick failed for %s", user.user_id)
         return sent

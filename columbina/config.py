@@ -119,6 +119,11 @@ class Settings:
     initiative_tick_seconds: int = field(default_factory=lambda: _env_int("INITIATIVE_TICK_SECONDS", 600))
     default_timezone: str = field(default_factory=lambda: _env("DEFAULT_TIMEZONE", "Europe/Moscow"))
 
+    # Внутренняя жизнь: самостоятельные исследования, сны, дневник
+    inner_life_enabled: bool = field(default_factory=lambda: _env_bool("INNER_LIFE_ENABLED", True))
+    research_per_day: int = field(default_factory=lambda: _env_int("RESEARCH_PER_DAY", 2))
+    dreams_every_days: float = field(default_factory=lambda: _env_float("DREAMS_EVERY_DAYS", 3.0))
+
     # Стоимость
     daily_budget_usd: float = field(default_factory=lambda: _env_float("DAILY_BUDGET_USD_PER_USER", 3.0))
 

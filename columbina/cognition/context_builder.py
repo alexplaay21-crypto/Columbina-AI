@@ -99,6 +99,7 @@ class TurnContext:
     extra_observations: list[str] = field(default_factory=list)
     initiative_reason: str | None = None
     lullaby: str = ""  # текст колыбельной — только когда она поёт
+    inner: dict = field(default_factory=dict)  # находки, цели, сон, что она делала (InnerLife.context_bits)
 
 
 def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
@@ -170,6 +171,24 @@ def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
         impulses.append(IMPULSES["greeting_after_absence"])
     if impulses:
         sections.append((2, "Тебе хочется: " + "; ".join(dict.fromkeys(impulses)) + ". Это импульс, не инструкция."))
+
+    inner = ctx.inner or {}
+    if inner.get("did"):
+        sections.append((4, "Что ты действительно делала в последние дни (только это можно называть своими делами): "
+                            + "; ".join(inner["did"]) + "."))
+    if inner.get("findings"):
+        f = inner["findings"][0]
+        fact, _, hint = f["text"].partition(" || Как поделиться: ")
+        sections.append((4, f"Твоя свежая находка (прочитала сама: {f.get('source_title') or ''} {f.get('source_url') or ''}): "
+                            f"{fact}" + (f" Если к месту и тема рядом — можно поделиться, например: {hint}" if hint else "")
+                            + " Не вставляй её насильно."))
+    if inner.get("dream"):
+        sections.append((4, "Тебе недавно снился сон (это сон, не явь; рассказывай, только если к месту): "
+                            + inner["dream"][:400]))
+    if inner.get("goals"):
+        sections.append((5, "Твои небольшие цели сейчас: " + "; ".join(inner["goals"]) + "."))
+    if inner.get("interests"):
+        sections.append((5, "Тебе сейчас интересно: " + ", ".join(inner["interests"]) + "."))
 
     if ctx.open_threads:
         th = "; ".join(t["topic"] for t in ctx.open_threads[:3])

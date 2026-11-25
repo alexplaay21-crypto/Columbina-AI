@@ -158,6 +158,67 @@ CREATE TABLE IF NOT EXISTS web_log (
     created_at {REAL} NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_web_log_user ON web_log(user_id, created_at);
+CREATE TABLE IF NOT EXISTS interests (
+    id {PK},
+    user_id {BIGINT} NOT NULL,
+    topic TEXT NOT NULL,
+    weight {REAL} NOT NULL DEFAULT 0.5,
+    source TEXT NOT NULL DEFAULT 'seed',
+    last_explored_at {REAL},
+    created_at {REAL} NOT NULL,
+    UNIQUE(user_id, topic)
+);
+CREATE TABLE IF NOT EXISTS knowledge (
+    id {PK},
+    user_id {BIGINT} NOT NULL,
+    topic TEXT NOT NULL,
+    text TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'fact',
+    source_url TEXT,
+    source_title TEXT,
+    confidence {REAL} NOT NULL DEFAULT 0.7,
+    share_worthy INTEGER NOT NULL DEFAULT 0,
+    shared INTEGER NOT NULL DEFAULT 0,
+    mentions INTEGER NOT NULL DEFAULT 0,
+    created_at {REAL} NOT NULL,
+    embedding {BLOB}
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_user ON knowledge(user_id, created_at);
+CREATE TABLE IF NOT EXISTS diary (
+    id {PK},
+    user_id {BIGINT} NOT NULL,
+    category TEXT NOT NULL,
+    text TEXT NOT NULL,
+    mood TEXT,
+    created_at {REAL} NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diary_user ON diary(user_id, created_at);
+CREATE TABLE IF NOT EXISTS goals (
+    id {PK},
+    user_id {BIGINT} NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    progress TEXT,
+    created_at {REAL} NOT NULL,
+    updated_at {REAL} NOT NULL
+);
+CREATE TABLE IF NOT EXISTS research (
+    id {PK},
+    user_id {BIGINT} NOT NULL,
+    topic TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    steps INTEGER NOT NULL DEFAULT 0,
+    summary TEXT,
+    open_questions TEXT,
+    created_at {REAL} NOT NULL,
+    updated_at {REAL} NOT NULL
+);
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id {BIGINT} NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+);
 CREATE TABLE IF NOT EXISTS persona_embeddings (
     chunk_id TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
@@ -171,7 +232,8 @@ TYPES = {
 }
 
 ALL_TABLES = ["users", "messages", "summaries", "episodes", "facts", "relationship", "emotion_state", "events",
-              "threads", "notes", "initiatives", "usage", "web_log", "persona_embeddings"]
+              "threads", "notes", "initiatives", "usage", "web_log", "interests", "knowledge", "diary", "goals",
+              "research", "user_settings", "persona_embeddings"]
 
 
 def schema_for(dialect: str) -> str:
@@ -557,6 +619,131 @@ class MemoryStore:
     async def web_recent(self, user_id: int | None, n: int = 10) -> list[dict[str, Any]]:
         return await self.d.fetchall("SELECT * FROM web_log WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, n))
 
+    # ---------- settings ----------
+    async def get_setting(self, user_id: int, key: str, default: str | None = None) -> str | None:
+        r = await self.d.fetchone("SELECT value FROM user_settings WHERE user_id=? AND key=?", (user_id, key))
+        return r["value"] if r else default
+
+    async def set_setting(self, user_id: int, key: str, value: str) -> None:
+        await self.d.execute(
+            "INSERT INTO user_settings(user_id, key, value) VALUES (?,?,?) "
+            "ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value", (user_id, key, str(value)))
+
+    async def settings(self, user_id: int) -> dict[str, str]:
+        return {r["key"]: r["value"] for r in await self.d.fetchall(
+            "SELECT key, value FROM user_settings WHERE user_id=?", (user_id,))}
+
+    # ---------- interests ----------
+    async def bump_interest(self, user_id: int, topic: str, delta: float, source: str) -> None:
+        topic = topic.strip().lower()[:80]
+        if not topic:
+            return
+        now = time.time()
+        await self.d.execute(
+            "INSERT INTO interests(user_id, topic, weight, source, created_at) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(user_id, topic) DO UPDATE SET weight=CASE WHEN interests.weight + excluded.weight > 1.0 "
+            "THEN 1.0 ELSE interests.weight + excluded.weight END",
+            (user_id, topic, float(max(0.05, delta)), source, now))
+
+    async def interests(self, user_id: int) -> list[dict[str, Any]]:
+        return await self.d.fetchall("SELECT * FROM interests WHERE user_id=? ORDER BY weight DESC", (user_id,))
+
+    async def mark_explored(self, user_id: int, topic: str) -> None:
+        await self.d.execute("UPDATE interests SET last_explored_at=? WHERE user_id=? AND topic=?",
+                             (time.time(), user_id, topic.strip().lower()))
+
+    async def decay_interests(self, user_id: int, factor: float = 0.97, floor: float = 0.1) -> None:
+        await self.d.execute("UPDATE interests SET weight=CASE WHEN weight*? < ? THEN ? ELSE weight*? END "
+                             "WHERE user_id=? AND source<>'seed'", (factor, floor, floor, factor, user_id))
+
+    # ---------- knowledge journal ----------
+    async def add_knowledge(self, user_id: int, topic: str, text: str, kind: str, source_url: str | None,
+                            source_title: str | None, confidence: float, share_worthy: bool,
+                            embedding: np.ndarray | None) -> int:
+        return await self.d.insert(
+            "INSERT INTO knowledge(user_id, topic, text, kind, source_url, source_title, confidence, share_worthy, "
+            "created_at, embedding) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (user_id, topic[:120], text[:600], kind, source_url, (source_title or "")[:200], float(confidence),
+             int(share_worthy), time.time(), to_blob(embedding)))
+
+    async def knowledge(self, user_id: int, topic: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        q, args = "SELECT * FROM knowledge WHERE user_id=?", [user_id]
+        if topic:
+            q += " AND topic=?"
+            args.append(topic)
+        rows = await self.d.fetchall(q + " ORDER BY id DESC LIMIT ?", (*args, limit))
+        for r in rows:
+            r["embedding"] = from_blob(r["embedding"])
+        return rows
+
+    async def unshared_findings(self, user_id: int, max_mentions: int = 2) -> list[dict[str, Any]]:
+        return await self.d.fetchall(
+            "SELECT * FROM knowledge WHERE user_id=? AND share_worthy=1 AND shared=0 AND mentions<? "
+            "ORDER BY id DESC LIMIT 5", (user_id, max_mentions))
+
+    async def mark_knowledge(self, kid: int, shared: bool | None = None, mention: bool = False) -> None:
+        if shared is not None:
+            await self.d.execute("UPDATE knowledge SET shared=? WHERE id=?", (int(shared), kid))
+        if mention:
+            await self.d.execute("UPDATE knowledge SET mentions=mentions+1 WHERE id=?", (kid,))
+
+    # ---------- diary ----------
+    async def add_diary(self, user_id: int, category: str, text: str, mood: str | None = None,
+                        at: float | None = None) -> int:
+        return await self.d.insert("INSERT INTO diary(user_id, category, text, mood, created_at) VALUES (?,?,?,?,?)",
+                                   (user_id, category, text[:2000], mood, float(at or time.time())))
+
+    async def diary(self, user_id: int, category: str | None = None, query: str | None = None,
+                    limit: int = 10) -> list[dict[str, Any]]:
+        q, args = "SELECT * FROM diary WHERE user_id=?", [user_id]
+        if category:
+            q += " AND category=?"
+            args.append(category)
+        if query:
+            q += " AND LOWER(text) LIKE ?"
+            args.append(f"%{query.lower()}%")
+        return await self.d.fetchall(q + " ORDER BY id DESC LIMIT ?", (*args, limit))
+
+    # ---------- goals ----------
+    async def add_goal(self, user_id: int, title: str) -> int:
+        now = time.time()
+        return await self.d.insert("INSERT INTO goals(user_id, title, created_at, updated_at) VALUES (?,?,?,?)",
+                                   (user_id, title[:200], now, now))
+
+    async def goals(self, user_id: int, status: str | None = "active") -> list[dict[str, Any]]:
+        if status:
+            return await self.d.fetchall("SELECT * FROM goals WHERE user_id=? AND status=? ORDER BY id DESC",
+                                         (user_id, status))
+        return await self.d.fetchall("SELECT * FROM goals WHERE user_id=? ORDER BY id DESC", (user_id,))
+
+    async def update_goal(self, goal_id: int, status: str | None = None, progress: str | None = None) -> None:
+        if status:
+            await self.d.execute("UPDATE goals SET status=?, updated_at=? WHERE id=?", (status, time.time(), goal_id))
+        if progress is not None:
+            await self.d.execute("UPDATE goals SET progress=?, updated_at=? WHERE id=?",
+                                 (progress[:400], time.time(), goal_id))
+
+    # ---------- research ----------
+    async def open_research(self, user_id: int) -> list[dict[str, Any]]:
+        return await self.d.fetchall(
+            "SELECT * FROM research WHERE user_id=? AND status='open' ORDER BY updated_at", (user_id,))
+
+    async def add_research(self, user_id: int, topic: str) -> int:
+        now = time.time()
+        return await self.d.insert("INSERT INTO research(user_id, topic, created_at, updated_at) VALUES (?,?,?,?)",
+                                   (user_id, topic[:120], now, now))
+
+    async def update_research(self, rid: int, **fields: Any) -> None:
+        allowed = {"status", "steps", "summary", "open_questions"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        fields["updated_at"] = time.time()
+        cols = ", ".join(f"{k}=?" for k in fields)
+        await self.d.execute(f"UPDATE research SET {cols} WHERE id=?", (*fields.values(), rid))
+
+    async def research_since(self, user_id: int, since: float) -> list[dict[str, Any]]:
+        return await self.d.fetchall("SELECT * FROM research WHERE user_id=? AND updated_at>=? ORDER BY id DESC",
+                                     (user_id, float(since)))
+
     # ---------- persona embeddings cache ----------
     async def get_persona_embedding(self, chunk_id: str, content_hash: str) -> np.ndarray | None:
         r = await self.d.fetchone(
@@ -574,5 +761,6 @@ class MemoryStore:
     # ---------- privacy ----------
     async def forget_user(self, user_id: int) -> None:
         for table in ("messages", "summaries", "episodes", "facts", "relationship", "emotion_state",
-                      "events", "threads", "notes", "initiatives", "web_log"):
+                      "events", "threads", "notes", "initiatives", "web_log", "interests", "knowledge", "diary",
+                      "goals", "research", "user_settings"):
             await self.d.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))

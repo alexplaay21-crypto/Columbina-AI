@@ -105,6 +105,7 @@ class CognitiveEngine:
         self.weather = weather
         self.vision = vision  # VisionAdapter: зрение для моделей без зрения
         self.web = web_tools  # WebTools: поиск, чтение страниц, открытые API (None — интернет выключен)
+        self.inner = None  # InnerLife: интересы, исследования, дневник, сны (подключается в main)
         self.emotions = EmotionModel(persona.emotions)
         self.relationship = RelationshipModel(persona.relationship)
         self.abilities = AbilitiesEngine(persona.abilities)
@@ -282,12 +283,15 @@ class CognitiveEngine:
 
         emo_text, manners = self.emotions.describe(emo, sit.tags)
         her_recent = [m.text for m in history if m.role == "assistant"][-6:]
+        inner_bits = await self.inner.context_bits(user_id, None) if self.inner else {}
+        for f in inner_bits.get("findings", [])[:1]:
+            await self.store.mark_knowledge(f["id"], mention=True)
         ctx = TurnContext(
             situation=sit, user=user, stage=rel.stage, stage_text=self.relationship.describe(rel),
             emotion_text=emo_text, emotion_manners=manners, recall=recall, summary=summary,
             appraisal=appr, abilities=active, perception_text=perception_text, open_threads=threads,
             pending_notes=notes, style_hints=self.style.overused(her_recent, user.preferred_name or user.display_name),
-            absence_days=absence_days, extra_observations=extra_obs,
+            absence_days=absence_days, extra_observations=extra_obs, inner=inner_bits,
             lullaby=self.persona.lullaby_block() if self._wants_lullaby(appr.conditions, sit) else "",
         )
         inner = render_inner_context(ctx, self.s.context_budget_tokens)
@@ -495,6 +499,9 @@ class CognitiveEngine:
 
     async def _apply_reflection(self, user_id, user_msg_id, history_text, user_text, applied, threads, result, ts):
         await self._apply_location(user_id, result)
+        if self.inner:
+            await self.inner.learn_topics(user_id, result.topics)
+            await self.inner.diary_from_reflection(user_id, result, ", ".join(result.emotion_events[:2]))
         # Эмоции и доверие (фоновые события — после ответа, на следующий ход)
         row = await self.store.get_emotion(user_id)
         if row:

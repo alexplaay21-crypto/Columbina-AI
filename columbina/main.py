@@ -41,6 +41,10 @@ async def build(settings=None):
             raise
         raise SystemExit(f"Эмбеддинги ({s.embedding_provider}) вернули HTTP {e.response.status_code}: "
                          "проверьте OPENROUTER_API_KEY / OPENROUTER_EMBEDDING_MODEL или поставьте EMBEDDING_PROVIDER=local")
+    from .inner.life import InnerLife, Limits
+
+    engine.inner = InnerLife(engine, s.persona_dir, Limits(research_per_day=s.research_per_day,
+                                                           dreams_every_days=s.dreams_every_days), s.inner_life_enabled)
     s.media_tmp_dir.mkdir(parents=True, exist_ok=True)
     if s.stt_provider == "openrouter":
         stt = OpenRouterSpeechToText(s.openrouter_base_url, s.openrouter_api_key, s.openrouter_stt_model, s.media_tmp_dir)
@@ -73,7 +77,7 @@ async def main() -> None:
     scheduler = None
     try:
         tg = TelegramInterface(s, engine, media)
-        scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds)
+        scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds, engine.inner)
         scheduler.start()
         await tg.run()
     finally:
