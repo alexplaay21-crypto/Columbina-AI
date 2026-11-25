@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -30,6 +31,7 @@ class KnowledgeChunk:
     tags: list[str]
     min_stage: int = 1
     reveal: str | None = None
+    status: str = "canon"  # canon | interpretation | project
 
     @property
     def search_text(self) -> str:
@@ -73,8 +75,30 @@ def _yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def load_persona(root: Path | str) -> Persona:
+def _canon_map(root: Path) -> list[tuple[re.Pattern[str], str]]:
+    path = root / "canon.yaml"
+    if not path.exists():
+        return []
+    items = _yaml(path).get("replace", [])
+    items = sorted(items, key=lambda i: len(i["from"]), reverse=True)  # длинные — первыми
+    return [(re.compile(rf"(?<!\w){re.escape(i['from'])}(?!\w)"), i["to"]) for i in items]
+
+
+def _tag_map(mapping: list[tuple[re.Pattern[str], str]], tag: str) -> str:
+    for rx, to in mapping:
+        tag = re.sub(rx.pattern, to.lower(), tag, flags=re.IGNORECASE)
+    return tag
+
+
+def apply_canon(text: str, mapping: list[tuple[re.Pattern[str], str]]) -> str:
+    for rx, to in mapping:
+        text = rx.sub(to, text)
+    return text
+
+
+def load_persona(root: Path | str, canon_mode: str = "genshin") -> Persona:
     root = Path(root)
+    mapping = _canon_map(root) if canon_mode == "genshin" else []
     lullaby_path = root / "lullaby.yaml"
     extra: dict[str, Any] = {"lullaby": _yaml(lullaby_path)} if lullaby_path.exists() else {}
     knowledge_raw = _yaml(root / "knowledge.yaml").get("chunks", [])
@@ -82,10 +106,12 @@ def load_persona(root: Path | str) -> Persona:
         KnowledgeChunk(
             id=c["id"],
             kind=c.get("kind", "biography"),
-            text=" ".join(str(c["text"]).split()),
-            tags=[str(t).lower() for t in c.get("tags", [])],
+            text=apply_canon(" ".join(str(c["text"]).split()), mapping),
+            tags=sorted({str(t).lower() for t in c.get("tags", [])}
+                        | {_tag_map(mapping, str(t).lower()) for t in c.get("tags", [])}),
             min_stage=int(c.get("min_stage", 1)),
             reveal=c.get("reveal"),
+            status=str(c.get("status", "canon")),
         )
         for c in knowledge_raw
     ]

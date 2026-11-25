@@ -54,6 +54,20 @@ SAD_NEWS = _rx(r"\bумер", r"\bумерла\b", r"\bпохорон", r"\bра
                r"\bгрустно\b", r"\bтяжело\b", r"\bодиноко\b")
 
 
+SARCASM = _rx(r"\bага,? конечно\b", r"\bну да,? ну да\b", r"\bочень смешно\b", r"\bкак же\b.*\)", r"\){3,}",
+              r"\bспасибо,? кэп\b", r"\bну-ну\b", r"\bугу,? верю\b")
+FLIRT = _rx(r"\bлюблю тебя\b", r"\bвлюбил", r"\bнравишься мне\b", r"\bты мне нравишься\b", r"\bпоцел",
+            r"\bобнима[юл]", r"\bсвидани", r"\bмоя девушка\b", r"\bбудь моей\b", r"\bскучаю по тебе\b",
+            r"\bкрасотка\b", r"\bмилашка\b")
+SURPRISE = _rx(r"\bпредставляешь\b", r"\bприкинь\b", r"\bоказывается\b", r"\bне поверишь\b", r"\bвау\b",
+               r"\bофигеть\b", r"\bнеожиданно\b", r"\bвнезапно\b")
+DEEP = _rx(r"\bзачем (?:мы|люди) живём\b", r"\bсмысл жизни\b", r"\bчто такое (?:дом|счастье|любовь|время|смерть)\b",
+           r"\bты (?:когда-нибудь )?(?:боишься|мечтаешь|жалеешь)\b", r"\bкто ты на самом деле\b",
+           r"\bчто ты (?:чувствуешь|думаешь) о\b")
+DANGER = _rx(r"\bмне страшно\b", r"\bменя (?:бьют|преследуют|травят)\b", r"\bя в больнице\b", r"\bавари",
+             r"\bпожар\b", r"\bскорую\b")
+
+
 @dataclass
 class Appraisal:
     emotion_events: list[str] = field(default_factory=list)
@@ -111,6 +125,16 @@ def appraise(text: str, recent_user_lengths: list[int] | None = None) -> Apprais
         a.add("user_shares_good_news")
     if SAD_NEWS.search(t):
         a.add("user_shares_sad_news")
+    if SARCASM.search(t):
+        a.add("sarcasm", obs="похоже на сарказм или шутку — не принимай буквально, если это не игра")
+    if FLIRT.search(t):
+        a.conditions.add("flirt")
+    if SURPRISE.search(t):
+        a.add("user_surprising_news")
+    if DEEP.search(t):
+        a.add("deep_question")
+    if DANGER.search(t):
+        a.add("user_in_danger", obs="собеседнику, возможно, страшно или плохо — сначала главное")
     if CANT_SLEEP.search(t):
         a.conditions.add("user_cant_sleep")
     if LOST.search(t):

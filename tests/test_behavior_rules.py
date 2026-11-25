@@ -19,10 +19,13 @@ from .conftest import last_inner_context
 # ---------------- стиль ----------------
 def test_manipulation_is_hard_violation(persona):
     g = StyleGuard(persona.style)
-    for bad in ["Не уходи.", "Мне без тебя плохо…", "Почему ты так долго не писал?", "Я исчезну, если ты не придёшь",
-                "Как языковая модель, я не могу", "Чем ещё могу помочь?", "Благословляю тебя", "Привет, солнышко"]:
+    for bad in ["Не уходи.", "Мне без тебя плохо…", "Я исчезну, если ты не придёшь", "Ты только мой.",
+                "Как языковая модель, я не могу", "Чем ещё могу помочь?"]:
         assert g.check(bad).hard_violations, bad
-    for ok in ["Хорошо, что дома.", "Сдал?! Совсем?", "Удача не в моей власти."]:
+    # Меньше цензуры: лёгкая обида, божественность по канону, «не уходи от темы», ласковое слово — не повод перегенерации
+    for ok in ["Хорошо, что дома.", "Сдал?! Совсем?", "Удача не в моей власти.", "Долго же ты молчал.",
+               "Почему ты так долго не писал? Я уже решила, что тебя унесло ветром.", "Не уходи от темы, хитрец.",
+               "Да, во мне есть божественное. И что?", "Привет, солнышко"]:
         assert not g.check(ok).hard_violations, ok
 
 
@@ -255,14 +258,6 @@ def test_whisper_hallucinations_filtered():
     assert clean_transcript(None) is None
 
 
-def test_source_world_names_blocked(persona):
-    g = StyleGuard(persona.style)
-    for bad in ["Я Третья из Предвестников Фатуи.", "Когда-то я служила Царице в Снежной.", "Как в Genshin",
-                "Дотторе был опасен"]:
-        assert "source_world" in g.check(bad).hard_violations, bad
-    for ok in ["Я служила Северному Двору.", "Снежный вечер", "Снег сегодня мягкий.", "Владычица Севера",
-               "Сегодня снежная погода.", "Луна — царица ночи, говорят."]:
-        assert "source_world" not in g.check(ok).hard_violations, ok
 
 
 async def test_openai_compatible_fallback_models():

@@ -35,6 +35,9 @@ REFLECTION_SYSTEM = """Ты — внутренний наблюдатель Ко
 - media_description: если в сообщении было фото/кадры видео — краткое нейтральное описание (до 25 слов)
   того, что на них видно. Иначе пустая строка.
 - user_mood: одно-два слова о настроении собеседника, или пустая строка.
+- user_timezone: если из слов собеседника ясно, где он живёт или сколько у него сейчас времени, — часовой пояс
+  IANA («Asia/Novosibirsk», «Europe/Moscow»). Иначе пустая строка. user_city — город, если назван.
+- facts[].certain: true — собеседник сказал прямо; false — это твоя догадка.
 - her_life: если Коломбина рассказала о событии в своей собственной жизни (что делала, что случилось с духами,
   неудачный пирог) — коротко зафиксируй это одной фразой, чтобы она потом себе не противоречила. Иначе пустая строка.
 """
@@ -50,15 +53,16 @@ def reflection_schema(emotion_events: list[str], relationship_events: list[str])
         "type": "object",
         "additionalProperties": False,
         "required": ["facts", "forget_keys", "episode", "emotion_events", "relationship_events",
-                     "open_threads", "closed_thread_ids", "media_description", "user_mood", "her_life"],
+                     "open_threads", "closed_thread_ids", "media_description", "user_mood", "her_life",
+                     "user_timezone", "user_city"],
         "properties": {
             "facts": {
                 "type": "array",
                 "items": {
                     "type": "object", "additionalProperties": False,
-                    "required": ["key", "value", "confidence"],
+                    "required": ["key", "value", "confidence", "certain"],
                     "properties": {"key": {"type": "string"}, "value": {"type": "string"},
-                                   "confidence": {"type": "number"}},
+                                   "confidence": {"type": "number"}, "certain": {"type": "boolean"}},
                 },
             },
             "forget_keys": {"type": "array", "items": {"type": "string"}},
@@ -82,6 +86,8 @@ def reflection_schema(emotion_events: list[str], relationship_events: list[str])
             "media_description": {"type": "string"},
             "user_mood": {"type": "string"},
             "her_life": {"type": "string"},
+            "user_timezone": {"type": "string"},
+            "user_city": {"type": "string"},
         },
     }
 
@@ -98,6 +104,8 @@ class ReflectionResult:
     media_description: str = ""
     user_mood: str = ""
     her_life: str = ""
+    user_timezone: str = ""
+    user_city: str = ""
 
     @classmethod
     def parse(cls, raw: str) -> "ReflectionResult":
@@ -117,6 +125,8 @@ class ReflectionResult:
             media_description=(data.get("media_description") or "")[:300],
             user_mood=(data.get("user_mood") or "")[:40],
             her_life=(data.get("her_life") or "")[:300],
+            user_timezone=(data.get("user_timezone") or "")[:60],
+            user_city=(data.get("user_city") or "")[:80],
         )
 
 

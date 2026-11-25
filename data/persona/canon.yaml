@@ -1,0 +1,51 @@
+# Соответствие рабочих названий досье (data/persona/source) каноничным названиям Genshin Impact.
+# Применяется к knowledge.yaml при загрузке (CANON_MODE=genshin, по умолчанию). CANON_MODE=dossier — оставить названия досье.
+#
+# confidence:
+#   author  — указано автором проекта в ТЗ
+#   sure    — общеизвестный канон
+#   check   — вероятное соответствие по описанию в досье; ПРОВЕРЬТЕ и поправьте, если нужно
+# Если соответствие неверно — исправьте здесь, код трогать не нужно.
+
+replace:
+  - {from: "Мир под завесой", to: "Тейват", confidence: sure}
+  - {from: "мир под завесой", to: "Тейват", confidence: sure}
+  - {from: "Северного Двора", to: "Фатуи", confidence: sure}
+  - {from: "Северному Двору", to: "Фатуи", confidence: sure}
+  - {from: "Северным Двором", to: "Фатуи", confidence: sure}
+  - {from: "Северный Двор", to: "Фатуи", confidence: sure}
+  - {from: "Северном Дворе", to: "Фатуи", confidence: sure}
+  - {from: "Двора", to: "Фатуи", confidence: sure}
+  - {from: "Двор", to: "Фатуи", confidence: sure}
+  - {from: "Владычица Севера", to: "Царица", confidence: sure}
+  - {from: "Владычицей", to: "Царицей", confidence: sure}
+  - {from: "Владычица", to: "Царица", confidence: sure}
+  - {from: "Владычице", to: "Царице", confidence: sure}
+  - {from: "Община Инейной Луны", to: "Frostmoon Scions", confidence: author}
+  - {from: "общины", to: "Frostmoon Scions", confidence: author}
+  - {from: "общине", to: "Frostmoon Scions", confidence: author}
+  - {from: "общиной", to: "Frostmoon Scions", confidence: author}
+  - {from: "Община", to: "Frostmoon Scions", confidence: author}
+  - {from: "община", to: "Frostmoon Scions", confidence: author}
+  - {from: "общину", to: "Frostmoon Scions", confidence: author}
+  - {from: "северном острове", to: "острове Hiisi", confidence: author}
+  - {from: "родной остров", to: "остров Hiisi", confidence: author}
+  - {from: "Учёному", to: "Дотторе", confidence: check}
+  - {from: "Учёного", to: "Дотторе", confidence: check}
+  - {from: "Учёный", to: "Дотторе", confidence: check}
+  - {from: "Подругой", to: "Сандроне", confidence: check}
+  - {from: "Подруге", to: "Сандроне", confidence: check}
+  - {from: "Подруга", to: "Сандроне", confidence: check}
+  - {from: "Подругу", to: "Сандроне", confidence: check}
+  - {from: "странника из другого мира", to: "Путешественника", confidence: check}
+  - {from: "Тот, кто позвал", to: "Путешественник", confidence: check}
+
+# Имена, о которых досье молчит или которые не удалось сопоставить, — остаются как есть:
+# Старшая наставница, Та, что подкрадывалась, Охотник, Отражение Луны, Серебряный Зал.
+# Луна: в досье «Инейная Луна»; в каноне её природа связана с тремя лунами — детали не выдумываются.
+
+names:
+  birth: Kuutar                     # author
+  given: Коломбина                  # sure — дала Царица
+  chosen: Columbina Hyposelenia     # author
+  rank: Третья из Одиннадцати Предвестников Фатуи   # sure

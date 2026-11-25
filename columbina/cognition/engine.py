@@ -80,6 +80,7 @@ class Reply:
     parts: list[str]
     reaction: str | None = None
     cost_usd: float = 0.0
+    quote: bool = False  # ответить «реплаем» на сообщение собеседника
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -92,6 +93,7 @@ class CognitiveEngine:
         llm: LLMProvider,
         embedder: Embedder,
         weather: WeatherService | None = None,
+        vision=None,
     ):
         self.s = settings
         self.persona = persona
@@ -99,6 +101,7 @@ class CognitiveEngine:
         self.llm = llm
         self.embedder = embedder
         self.weather = weather
+        self.vision = vision  # VisionAdapter: зрение для моделей без зрения
         self.emotions = EmotionModel(persona.emotions)
         self.relationship = RelationshipModel(persona.relationship)
         self.abilities = AbilitiesEngine(persona.abilities)
@@ -186,6 +189,14 @@ class CognitiveEngine:
         sit = await self.situation_for(user, now)
         ts = sit.now_utc.timestamp()
 
+        if self.vision is not None:
+            percepts = await self.vision.adapt(percepts)
+            for p in percepts:
+                desc = p.meta.get("vision_description")
+                if desc and "[фото]" in p.history:
+                    p.history = p.history.replace("[фото]", f"[фото: {desc[:400]}]", 1)
+                elif desc:
+                    p.history += f" (на кадрах: {desc[:400]})"
         parts, history_text = build_user_parts(percepts)
         user_text = "\n".join(p.text for p in parts if isinstance(p, TextPart))
 
@@ -218,6 +229,38 @@ class CognitiveEngine:
             await self.store.log_event(user_id, ev, "appraisal", user_text[:120])
         if appr.register and appr.register != user.register:
             user.register = appr.register
+        extra_obs: list[str] = []
+
+        # Она писала первой, а ответа долго не было — немного задета (без драмы).
+        last_init = await self.store.last_initiative(user_id)
+        if last_init and not last_init["answered"]:
+            hours = (ts - last_init["sent_at"]) / 3600
+            if hours >= 6:
+                emo = self.emotions.apply(emo, "ignored_initiative", weight=min(1.5, 0.5 + hours / 24),
+                                          cause="написала первой — ответа долго не было")
+                extra_obs.append(f"ты писала первой {int(hours)} ч назад, а ответа не было — тебе немного обидно; "
+                                 "можешь показать это одной сухой фразой или иронией и дальше говорить нормально")
+
+        # Флирт: медленная романтика — по стадии дружбы.
+        if "flirt" in appr.conditions:
+            close = rel.stage >= 4
+            emo = self.emotions.apply(emo, "flirt_close" if close else "flirt_early", cause="флирт")
+            extra_obs.append(
+                "собеседник флиртует; вы правда близки — можешь ответить тепло и честно о своих чувствах, "
+                "но без зависимости и ревности" if close else
+                "собеседник флиртует, а вы ещё мало знакомы — смутись или ответь игриво, всерьёз не подыгрывай "
+                "и не отталкивай грубо")
+
+        # Долгий разговор утомляет.
+        recent_count = sum(1 for m in await self.store.last_messages(user_id, 80) if ts - m.created_at < SESSION_GAP)
+        if recent_count and recent_count % 30 == 0:
+            emo = self.emotions.apply(emo, "long_conversation", cause="долгий разговор")
+
+        if not user.timezone and not user.city:
+            extra_obs.append("ты не знаешь, где собеседник и сколько у него времени (время выше — по Москве); "
+                             "если к месту, можешь спросить город")
+        if any(p.kind == "reply" for p in percepts):
+            extra_obs.append("собеседник отвечает на конкретное сообщение — отвечай прежде всего на него")
 
         # --- память ---
         history = await self.store.active_messages(user_id)
@@ -240,7 +283,8 @@ class CognitiveEngine:
             situation=sit, user=user, stage=rel.stage, stage_text=self.relationship.describe(rel),
             emotion_text=emo_text, emotion_manners=manners, recall=recall, summary=summary,
             appraisal=appr, abilities=active, perception_text=perception_text, open_threads=threads,
-            pending_notes=notes, style_hints=self.style.overused(her_recent), absence_days=absence_days,
+            pending_notes=notes, style_hints=self.style.overused(her_recent, user.preferred_name or user.display_name),
+            absence_days=absence_days, extra_observations=extra_obs,
             lullaby=self.persona.lullaby_block() if self._wants_lullaby(appr.conditions, sit) else "",
         )
         inner = render_inner_context(ctx, self.s.context_budget_tokens)
@@ -266,12 +310,15 @@ class CognitiveEngine:
         parsed = parse_reply(reply_text)
         if not parsed.parts and not parsed.reaction:
             parsed = ParsedReply(parts=["…"], reaction=None, raw=reply_text)
+        if not parsed.reaction:
+            parsed.reaction = await self._event_reaction(user_id, appr.emotion_events)
 
         # --- сохранение ---
         user_msg_id = await self.store.add_message(user_id, "user", history_text, at=ts)
-        stored_reply = "\n\n".join(parsed.parts) if parsed.parts else f"[реакция {parsed.reaction}]"
-        if parsed.parts and parsed.reaction:
-            stored_reply = f"[реакция {parsed.reaction}] " + stored_reply
+        # Реакция хранится в нашем же формате <react>, чтобы модель не училась писать «реакция» текстом.
+        stored_reply = "\n\n---\n\n".join(parsed.parts)
+        if parsed.reaction:
+            stored_reply = f"<react>{parsed.reaction}</react>" + ("\n" + stored_reply if stored_reply else "")
         await self.store.add_message(user_id, "assistant", stored_reply, at=ts + 0.001)
         if new_session:
             user.sessions += 1
@@ -287,7 +334,24 @@ class CognitiveEngine:
         self.spawn(self._after_turn(user_id, user_msg_id, history_text, user_text, stored_reply,
                                     appr.emotion_events + appr.relationship_events, images, ts))
         return Reply(parts=parsed.parts, reaction=parsed.reaction, cost_usd=cost,
+                     quote=any(p.kind == "reply" for p in percepts),
                      debug={"inner_context": inner, "tool_notes": tool_notes, "stage": rel.stage, "emotion": emo_text})
+
+    EVENT_REACTIONS = {
+        "gift_or_food": "🤗", "user_shares_good_news": "🔥", "user_surprising_news": "👀", "snow": "☃",
+        "thanks": "🕊", "user_shares_sad_news": "❤", "joke_shared": "😁", "compliment": "🙈", "flirt_early": "🙈",
+        "thunder": "🤯", "mechanism_or_animal": "👀", "sarcasm": "🌚",
+    }
+
+    async def _event_reaction(self, user_id: int, events: list[str]) -> str | None:
+        """Реакция, когда в сообщении что-то происходит, — но не на каждое сообщение подряд."""
+        emoji = next((self.EVENT_REACTIONS[e] for e in events if e in self.EVENT_REACTIONS), None)
+        if not emoji:
+            return None
+        recent = await self.store.last_messages(user_id, 4, role="assistant")
+        if any(m.text.startswith("<react>") for m in recent[-2:]):
+            return None
+        return emoji
 
     @staticmethod
     def _wants_lullaby(conditions: set[str], sit: Situation) -> bool:
@@ -405,7 +469,11 @@ class CognitiveEngine:
             [f"{f.key}: {f.value}" for f in facts[:20]], threads, applied, images,
         )
         await self._record_usage(user_id, "reflection", resp)
+        async with self.lock_for(user_id):  # запись памяти не пересекается с ходом разговора
+            await self._apply_reflection(user_id, user_msg_id, history_text, user_text, applied, threads, result, ts)
 
+    async def _apply_reflection(self, user_id, user_msg_id, history_text, user_text, applied, threads, result, ts):
+        await self._apply_location(user_id, result)
         # Эмоции и доверие (фоновые события — после ответа, на следующий ход)
         row = await self.store.get_emotion(user_id)
         if row:
@@ -431,6 +499,8 @@ class CognitiveEngine:
             vecs = await self.embedder.embed([f"{f['key']}: {f['value']}" for f in result.facts])
             for f, v in zip(result.facts, vecs):
                 conf = max(0.0, min(1.0, float(f.get("confidence", 0.7))))
+                if f.get("certain") is False:  # догадка, а не сказанное прямо
+                    conf = min(conf, 0.45)
                 pinned = f["key"].strip().lower() in {"имя", "как называть"}
                 await self.store.upsert_fact(user_id, f["key"], f["value"], conf, v, pinned=pinned)
 
@@ -460,6 +530,30 @@ class CognitiveEngine:
             if new_text == history_text:
                 new_text = history_text + f" (на кадрах: {result.media_description})"
             await self.store.update_message_text(user_msg_id, new_text)
+
+    async def _apply_location(self, user_id: int, result) -> None:
+        """Часовой пояс собеседника из разговора («я в Новосибирске», «у меня 3 ночи»)."""
+        user = await self.store.get_user(user_id)
+        if user is None or user.timezone:
+            return
+        tz = (result.user_timezone or "").strip()
+        if tz:
+            try:
+                ZoneInfo(tz)
+                await self.store.update_user(user_id, timezone=tz)
+                return
+            except Exception:
+                pass
+        city = (result.user_city or "").strip()
+        if city and self.weather:
+            try:
+                geo = await self.weather.geocode(city)
+            except Exception:
+                geo = None
+            if geo:
+                lat, lon, name, gtz = geo
+                await self.store.update_user(user_id, city=name, lat=lat, lon=lon,
+                                             **({"timezone": gtz} if gtz else {}))
 
     async def maybe_summarize(self, user_id: int) -> None:
         msgs = await self.store.active_messages(user_id)

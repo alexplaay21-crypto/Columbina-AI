@@ -25,7 +25,8 @@ def test_core_prompt_is_compact(persona):
 
 def test_core_prompt_keeps_key_traits(persona):
     p = persona.core_prompt
-    for must in ["не божество", "без фильтра", "Не выдумывай", "не уходи", "программ", "<react>", "leave_note"]:
+    for must in ["Kuutar", "Предвестник", "Не выдумывай", "не уходи", "программ", "<react>", "leave_note",
+                 "медленно", "по имени", "реакция"]:
         assert must in p, must
 
 
@@ -89,7 +90,7 @@ async def test_private_past_available_at_stage_4(engine, fake_llm, store):
                                                      milestones=["was_there_in_hard_time"]))
     await engine.respond(1, 1, text("Расскажешь, почему ушла из Северного Двора? Владычица тебя отпустила?"))
     ctx = last_inner_context(fake_llm)
-    assert "Владычица" in ctx
+    assert "Царица" in ctx and "Фатуи" in ctx  # канон Genshin подставлен в её биографию
 
 
 @pytest.mark.asyncio

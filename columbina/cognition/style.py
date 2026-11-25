@@ -6,8 +6,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-ALLOWED_REACTIONS = {"🕊", "🌚", "🐳", "🍓", "😴", "🤔", "👀", "❤", "☃", "🥱", "🙈", "🤗"}
+ALLOWED_REACTIONS = {"🕊", "🌚", "🐳", "🍓", "😴", "🤔", "👀", "❤", "☃", "🥱", "🙈", "🤗", "🔥", "😁", "🤯", "😢"}
 REACT_RE = re.compile(r"<react>\s*([^<]{1,8})\s*</react>")
+# Модели без опыта с нашим форматом иногда пишут реакцию словами — превращаем её в настоящую реакцию.
+TEXT_REACT_RE = re.compile(
+    r"^\s*[\[(]?\s*(?:реакция|reaction|react)\s*[:：]?\s*([^\s\])]{1,4})\s*[\])]?[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
 SPLIT_RE = re.compile(r"\n\s*-{3,}\s*\n")
 
 
@@ -28,13 +31,17 @@ class StyleVerdict:
 def parse_reply(text: str) -> ParsedReply:
     raw = text or ""
     reaction = None
-    m = REACT_RE.search(raw)
+    m = REACT_RE.search(raw) or TEXT_REACT_RE.search(raw)
     if m:
-        emo = m.group(1).strip().replace("️", "")
+        emo = m.group(1).strip().replace("\ufe0f", "")
         if emo in ALLOWED_REACTIONS:
             reaction = emo
-        raw = REACT_RE.sub("", raw).strip()
+        raw = TEXT_REACT_RE.sub("", REACT_RE.sub("", raw)).strip()
     parts = [p.strip() for p in SPLIT_RE.split(raw) if p.strip()]
+    if len(parts) == 1 and len(raw) > 320:
+        paras = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+        if 2 <= len(paras) <= 4 and all(len(p) < 700 for p in paras):
+            parts = paras  # длинный ответ из абзацев — как несколько сообщений подряд
     if len(parts) > 3:
         parts = parts[:2] + ["\n\n".join(parts[2:])]
     return ParsedReply(parts=parts, reaction=reaction, raw=text)
@@ -70,7 +77,7 @@ class StyleGuard:
         low = fixed.lower()
         for w in self.diminutives:
             if re.search(rf"\b{re.escape(w)}\b", low):
-                v.hard_violations.append("diminutives")
+                v.soft_fixes.append("diminutives")  # подсказка, не повод перегенерировать
                 break
         # Не больше max_excl восклицательных знаков: остальные → точки.
         count = 0
@@ -88,10 +95,16 @@ class StyleGuard:
         v.fixed_text = fixed
         return v
 
-    def overused(self, recent_replies: list[str]) -> list[str]:
+    def overused(self, recent_replies: list[str], user_name: str | None = None) -> list[str]:
         """Подсказки против повторов: какие характерные приметы уже приелись."""
         window = recent_replies[-self.sig_window:]
         hints = []
+        if user_name and len(user_name) > 1:
+            n = sum(len(re.findall(rf"(?<!\w){re.escape(user_name)}(?!\w)", r, re.IGNORECASE)) for r in window)
+            if n >= 2:
+                hints.append("не обращайся по имени")
+        if sum(1 for r in window if "\n- " in r or re.search(r"^\d\. ", r, re.M)) >= 2:
+            hints.append("без списков — это разговор")
         for _, (rx, mx, hint) in self.sig_markers.items():
             n = sum(len(rx.findall(r)) for r in window)
             if n > mx:

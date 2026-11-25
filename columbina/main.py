@@ -15,7 +15,7 @@ from .cognition.engine import CognitiveEngine
 from .config import load_settings, storage_target
 from .initiative.engine import InitiativeEngine
 from .initiative.scheduler import Scheduler
-from .llm.factory import make_llm, resolved_models
+from .llm.factory import make_llm, make_vision, resolved_models
 from .media.links import SafeFetcher
 from .media.processors import MediaProcessor, OpenRouterSpeechToText, SpeechToText
 from .memory.embeddings import make_embedder
@@ -26,12 +26,12 @@ from .telegram.bot import TelegramInterface
 
 async def build(settings=None):
     s = settings or load_settings()
-    persona = load_persona(s.persona_dir)
+    persona = load_persona(s.persona_dir, s.canon_mode)
     store = await MemoryStore(storage_target(s)).open()
     embedder = make_embedder(s)
     llm = make_llm(s)
     weather = WeatherService()
-    engine = CognitiveEngine(s, persona, store, llm, embedder, weather)
+    engine = CognitiveEngine(s, persona, store, llm, embedder, weather, vision=make_vision(s))
     try:
         await engine.setup()
     except BaseException as e:

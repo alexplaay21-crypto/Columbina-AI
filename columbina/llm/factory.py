@@ -61,3 +61,25 @@ class RoutingProvider:
 
     async def complete(self, request):
         return await (self.background if request.tier == "background" else self.main).complete(request)
+
+
+def make_vision(s: Settings):
+    """Зрение для основной модели без зрения: VISION_* из .env или, на OpenRouter, Gemini Flash-Lite тем же ключом."""
+    from ..perception.vision import VisionAdapter
+    from .capabilities import supports_pdf, supports_vision
+
+    main, _ = resolved_models(s)
+    has_vision = supports_vision(main, s.main_vision)
+    has_pdf = supports_pdf(main, s.main_pdf)
+    describer = None
+    if not has_vision:
+        from .openrouter_provider import OpenRouterProvider
+
+        if s.vision_api_key and s.vision_base_url and s.vision_model:
+            describer = OpenRouterProvider(s.vision_api_key, s.vision_model, s.vision_model, "low", s.vision_base_url,
+                                           timeout=s.llm_timeout)
+        elif s.llm_provider == "openrouter" and "openrouter.ai" in s.openrouter_base_url and s.openrouter_api_key:
+            describer = OpenRouterProvider(s.openrouter_api_key, s.vision_model or "google/gemini-3.1-flash-lite",
+                                           s.vision_model or "google/gemini-3.1-flash-lite", "low",
+                                           s.openrouter_base_url, timeout=s.llm_timeout)
+    return VisionAdapter(has_vision, has_pdf, describer)

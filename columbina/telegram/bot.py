@@ -75,13 +75,20 @@ class TelegramInterface:
     def allowed(self, user_id: int) -> bool:
         return not self.s.allowed_user_ids or user_id in self.s.allowed_user_ids or user_id in self.s.admin_user_ids
 
-    async def send_parts(self, chat_id: int, parts: list[str]) -> None:
+    async def send_parts(self, chat_id: int, parts: list[str], reply_to: int | None = None) -> None:
+        from aiogram.types import ReplyParameters
+
+        first = True
         for i, part in enumerate(parts):
             if i > 0:
                 await self.bot.send_chat_action(chat_id, ChatAction.TYPING)
                 await asyncio.sleep(min(3.5, 0.6 + len(part) / 45))
             for chunk in _split_long(part):
-                await self.bot.send_message(chat_id, chunk)
+                kwargs = {}
+                if first and reply_to:
+                    kwargs["reply_parameters"] = ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)
+                await self.bot.send_message(chat_id, chunk, **kwargs)
+                first = False
 
     # ------------------------------------------------------------------ handlers
     def _register(self) -> None:
@@ -291,7 +298,9 @@ class TelegramInterface:
             except Exception:
                 log.debug("reaction failed", exc_info=True)
         if reply.parts:
-            await self.send_parts(chat_id, reply.parts)
+            # Если собеседник отвечал на конкретное сообщение — отвечаем «реплаем» на его сообщение.
+            quoted = next((m for m, _ in reversed(pend.items) if m.reply_to_message), None) if reply.quote else None
+            await self.send_parts(chat_id, reply.parts, reply_to=quoted.message_id if quoted else None)
         if uid in self.s.admin_user_ids:
             note = admin_error_note(reply.debug)
             if reply.debug.get("over_budget"):
@@ -336,6 +345,9 @@ class TelegramInterface:
         caption = m.caption
         forward = _forward_label(m)
         tmp: list[Path] = []
+        reply_p = self._reply_percept(m)
+        if reply_p:
+            out.append(reply_p)
         try:
             if m.photo:
                 ph = m.photo[-1]
@@ -396,6 +408,24 @@ class TelegramInterface:
                 if p.kind == "text":
                     p.kind, p.channel, p.note = "forward", "read", f"пересланное сообщение {forward} — это чужие слова"
         return out
+
+    def _reply_percept(self, m: Message) -> Percept | None:
+        """Собеседник ответил на конкретное сообщение (свайп/«Ответить») — это важный контекст."""
+        r = m.reply_to_message
+        if r is None:
+            return None
+        mine = bool(r.from_user and r.from_user.is_bot and r.from_user.id == self.bot.id)
+        who = "твоё" if mine else "своё" if (r.from_user and m.from_user and r.from_user.id == m.from_user.id) else "чужое"
+        quote = getattr(m, "quote", None)
+        snippet = (quote.text if quote and quote.text else None) or r.text or r.caption or ""
+        if not snippet:
+            snippet = ("фото" if r.photo else "голосовое" if r.voice else "видео" if (r.video or r.video_note)
+                       else "стикер" if r.sticker else "файл" if r.document else "сообщение")
+            snippet = f"[{snippet}]"
+        snippet = " ".join(snippet.split())[:400]
+        text = f"[в ответ на {who} сообщение: «{snippet}»]"
+        return Percept("reply", True, "text", f"собеседник отвечает на {who} сообщение: «{snippet[:120]}»",
+                       text=text, history=text)
 
     # ------------------------------------------------------------------ run
     async def run(self) -> None:

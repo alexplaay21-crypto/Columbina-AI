@@ -137,8 +137,11 @@ def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
         sections.append((5, "Что недавно было в твоей жизни (не противоречь этому):\n" + life))
 
     if ctx.recall.persona:
+        status = {"canon": "", "interpretation": " (твоя черта, не прямой канон)",
+                  "project": " (сложилось в этих разговорах, не канон)"}
         own = "\n".join(
-            f"- {c.text}" + (f" [делишься так: {c.reveal}]" if c.reveal else "") for c in ctx.recall.persona
+            f"- {c.text}{status.get(c.status, '')}" + (f" [делишься так: {c.reveal}]" if c.reveal else "")
+            for c in ctx.recall.persona
         )
         sections.append((4, "Из твоей собственной жизни (знание, не повод рассказывать без вопроса):\n" + own))
 

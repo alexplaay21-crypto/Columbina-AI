@@ -70,6 +70,12 @@ class Settings:
     background_base_url: str = field(default_factory=lambda: _env("BACKGROUND_BASE_URL"))
     background_api_key: str = field(default_factory=lambda: _env("BACKGROUND_API_KEY"))
     llm_timeout: float = field(default_factory=lambda: _env_float("LLM_TIMEOUT", 60.0))
+    # Зрение: auto — по названию модели; если основная не видит картинки, их описывает VISION_MODEL
+    main_vision: str = field(default_factory=lambda: _env("MAIN_VISION", "auto").lower())
+    main_pdf: str = field(default_factory=lambda: _env("MAIN_PDF", "auto").lower())
+    vision_base_url: str = field(default_factory=lambda: _env("VISION_BASE_URL"))
+    vision_api_key: str = field(default_factory=lambda: _env("VISION_API_KEY"))
+    vision_model: str = field(default_factory=lambda: _env("VISION_MODEL"))
     main_model: str = field(default_factory=lambda: _env("MAIN_MODEL"))
     background_model: str = field(default_factory=lambda: _env("BACKGROUND_MODEL"))
     main_effort: str = field(default_factory=lambda: _env("MAIN_EFFORT", "low"))
@@ -94,6 +100,7 @@ class Settings:
     # Хранилище: DATABASE_URL (postgresql://...) важнее DB_PATH (SQLite)
     database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "var" / "columbina.sqlite3"))))
+    canon_mode: str = field(default_factory=lambda: _env("CANON_MODE", "genshin").lower())  # genshin | dossier
     persona_dir: Path = field(default_factory=lambda: Path(_env("PERSONA_DIR", str(ROOT / "data" / "persona"))))
     media_tmp_dir: Path = field(default_factory=lambda: Path(_env("MEDIA_TMP_DIR", str(ROOT / "var" / "tmp"))))
 
