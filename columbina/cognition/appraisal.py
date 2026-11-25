@@ -40,6 +40,8 @@ VY = _rx(r"\bвы\b", r"\bвас\b", r"\bвам\b", r"\bваш", r"\bвами\b"
 TY = _rx(r"\bты\b", r"\bтебя\b", r"\bтебе\b", r"\bтвой\b", r"\bтвоя\b", r"\bтобой\b")
 CANT_SLEEP = _rx(r"не спится", r"не могу уснуть", r"бессонниц", r"не сплю")
 LOST = _rx(r"не знаю,? с чего начать", r"запутал", r"не понимаю,? что делать", r"потерял(?:ся|ась)")
+SING = _rx(r"\bспой\b", r"\bспеть\b", r"\bпоёшь\b", r"\bпоешь\b", r"колыбельн", r"\bпесенк", r"\bнапой\b",
+           r"твою песню", r"dormi cara")
 REMINDER = _rx(r"\bнапомни\b", r"\bнапомнишь\b", r"не дай (?:мне )?забыть")
 AI_QUESTION = _rx(r"ты (?:—|-)? ?(?:бот|программа|нейросеть|ии|ai|робот|chatgpt|gpt|claude)\b", r"ты (?:настоящая|живая)\?")
 CRISIS = _rx(r"покончить с собой", r"не хочу (?:больше )?жить", r"\bсуицид", r"убить себя", r"порезать себя",
@@ -113,6 +115,8 @@ def appraise(text: str, recent_user_lengths: list[int] | None = None) -> Apprais
         a.conditions.add("user_cant_sleep")
     if LOST.search(t):
         a.conditions.add("user_lost")
+    if SING.search(t):
+        a.conditions.add("sing_request")
     if REMINDER.search(t):
         a.conditions.add("reminder_request")
     if AI_QUESTION.search(t):

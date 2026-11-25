@@ -98,6 +98,7 @@ class TurnContext:
     absence_days: float | None = None
     extra_observations: list[str] = field(default_factory=list)
     initiative_reason: str | None = None
+    lullaby: str = ""  # текст колыбельной — только когда она поёт
 
 
 def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
@@ -148,6 +149,9 @@ def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
 
     if ctx.abilities:
         sections.append((3, "Способности и пределы сейчас:\n" + "\n".join(f"- {x.note}" for x in ctx.abilities)))
+
+    if ctx.lullaby:
+        sections.append((1, ctx.lullaby))
 
     if ctx.perception_text:
         sections.append((1, "Что дошло в этом сообщении:\n" + ctx.perception_text))

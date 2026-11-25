@@ -121,9 +121,16 @@ class CognitiveEngine:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
-    async def drain(self) -> None:
-        while self._background:
-            await asyncio.gather(*list(self._background), return_exceptions=True)
+    async def drain(self, timeout: float = 60.0) -> None:
+        """Дождаться фоновых задач (рефлексия, резюме). Не крутится на уже завершённых и не висит вечно."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            self._background = {t for t in self._background if not t.done()}
+            remaining = deadline - loop.time()
+            if not self._background or remaining <= 0:
+                return
+            await asyncio.wait(self._background, timeout=remaining)
 
     async def _record_usage(self, user_id: int | None, purpose: str, resp: LLMResponse) -> None:
         await self.store.log_usage(user_id, purpose, resp.model, resp.usage, resp.cost_usd)
@@ -234,6 +241,7 @@ class CognitiveEngine:
             emotion_text=emo_text, emotion_manners=manners, recall=recall, summary=summary,
             appraisal=appr, abilities=active, perception_text=perception_text, open_threads=threads,
             pending_notes=notes, style_hints=self.style.overused(her_recent), absence_days=absence_days,
+            lullaby=self.persona.lullaby_block() if self._wants_lullaby(appr.conditions, sit) else "",
         )
         inner = render_inner_context(ctx, self.s.context_budget_tokens)
 
@@ -280,6 +288,10 @@ class CognitiveEngine:
                                     appr.emotion_events + appr.relationship_events, images, ts))
         return Reply(parts=parsed.parts, reaction=parsed.reaction, cost_usd=cost,
                      debug={"inner_context": inner, "tool_notes": tool_notes, "stage": rel.stage, "emotion": emo_text})
+
+    @staticmethod
+    def _wants_lullaby(conditions: set[str], sit: Situation) -> bool:
+        return "sing_request" in conditions or ("user_cant_sleep" in conditions and sit.part == "night")
 
     def _history_messages(self, history) -> list[Message]:
         # Вся активная история: её размер ограничивает суммаризация (архивирует кусками),

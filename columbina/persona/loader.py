@@ -7,6 +7,7 @@
   emotions.yaml      — эмоциональная модель (базовые уровни, затухание, события)
   relationship.yaml  — стадии дружбы, события доверия, вехи
   style_rules.yaml   — правила пост-проверки стиля
+  lullaby.yaml       — её колыбельная (точный текст, смысл, правила исполнения)
   source/            — исходное досье (истина в последней инстанции, в запросы не передаётся)
 """
 
@@ -50,6 +51,18 @@ class Persona:
     style: dict[str, Any]
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def lullaby_block(self) -> str:
+        """Текст для контекста, когда она поёт. Пусто, если колыбельная не задана."""
+        lb = self.extra.get("lullaby")
+        if not lb:
+            return ""
+        p = lb["parts"]
+        song = f"{p['versus']}\n\n{p['chorus']}\n\n{p['conclusio']}"
+        rules = " ".join(f"{r}" for r in lb.get("rules", []))
+        return (f"Твоя колыбельная ({lb.get('language', '')}; единственное, что ты помнишь о своём рождении). "
+                f"Куплет повторяется дважды, кода — в самом конце:\n{song}\n\n"
+                f"Смысл приблизительно: {' '.join(lb.get('meaning_ru', '').split())}\n{rules}")
+
     @cached_property
     def ability_list(self) -> list[dict[str, Any]]:
         return list(self.abilities.get("abilities", []))
@@ -62,6 +75,8 @@ def _yaml(path: Path) -> dict[str, Any]:
 
 def load_persona(root: Path | str) -> Persona:
     root = Path(root)
+    lullaby_path = root / "lullaby.yaml"
+    extra: dict[str, Any] = {"lullaby": _yaml(lullaby_path)} if lullaby_path.exists() else {}
     knowledge_raw = _yaml(root / "knowledge.yaml").get("chunks", [])
     chunks = [
         KnowledgeChunk(
@@ -85,4 +100,5 @@ def load_persona(root: Path | str) -> Persona:
         emotions=_yaml(root / "emotions.yaml"),
         relationship=_yaml(root / "relationship.yaml"),
         style=_yaml(root / "style_rules.yaml"),
+        extra=extra,
     )

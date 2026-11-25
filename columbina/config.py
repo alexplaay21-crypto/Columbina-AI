@@ -67,7 +67,8 @@ class Settings:
     stt_api_key: str = field(default_factory=lambda: _env("STT_API_KEY"))
     stt_model: str = field(default_factory=lambda: _env("STT_MODEL", "gpt-4o-mini-transcribe"))
 
-    # Хранилище
+    # Хранилище: DATABASE_URL (postgresql://...) важнее DB_PATH (SQLite)
+    database_url: str = field(default_factory=lambda: _env("DATABASE_URL"))
     db_path: Path = field(default_factory=lambda: Path(_env("DB_PATH", str(ROOT / "var" / "columbina.sqlite3"))))
     persona_dir: Path = field(default_factory=lambda: Path(_env("PERSONA_DIR", str(ROOT / "data" / "persona"))))
     media_tmp_dir: Path = field(default_factory=lambda: Path(_env("MEDIA_TMP_DIR", str(ROOT / "var" / "tmp"))))
@@ -88,6 +89,10 @@ class Settings:
     # Ссылки
     link_fetch_enabled: bool = field(default_factory=lambda: _env_bool("LINK_FETCH_ENABLED", True))
     link_ca_bundle: str = field(default_factory=lambda: _env("LINK_CA_BUNDLE"))  # пусто — системные сертификаты
+
+
+def storage_target(s: "Settings") -> str:
+    return s.database_url or str(s.db_path)
 
 
 def load_settings() -> Settings:

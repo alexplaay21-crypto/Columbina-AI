@@ -141,3 +141,27 @@ async def test_history_has_gap_markers_and_cache_breakpoint(engine, fake_llm):
     hist = [m for m in req.messages if m.role != "system"]
     assert any("(спустя 2 дн.)" in m.plain_text() for m in hist)
     assert hist[-2].cache_breakpoint  # последний элемент истории перед новым сообщением
+
+
+def test_lullaby_loaded_exactly(persona):
+    block = persona.lullaby_block()
+    assert "Dormi cara columbula" in block
+    assert "Neve plumam pulvis foedet tuam" in block
+    assert "Capias bona, somnias a luna" in block
+
+
+@pytest.mark.asyncio
+async def test_lullaby_only_when_singing(engine, fake_llm):
+    await engine.respond(1, 1, text("Как прошёл день?"))
+    assert "Dormi cara" not in last_inner_context(fake_llm)
+    await engine.respond(1, 1, text("Спой мне колыбельную, пожалуйста"))
+    ctx = last_inner_context(fake_llm)
+    assert "Dormi cara columbula" in ctx
+    assert "без своих добавлений" in ctx  # правила исполнения идут вместе с текстом
+
+
+@pytest.mark.asyncio
+async def test_lullaby_at_night_when_cant_sleep(engine, fake_llm):
+    night = datetime(2026, 11, 25, 22, 30, tzinfo=timezone.utc)  # 01:30 по Москве
+    await engine.respond(1, 1, text("не могу уснуть"), now=night)
+    assert "Dormi cara columbula" in last_inner_context(fake_llm)

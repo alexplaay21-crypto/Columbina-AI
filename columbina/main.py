@@ -10,7 +10,7 @@ import logging
 
 from .abilities.weather import WeatherService
 from .cognition.engine import CognitiveEngine
-from .config import load_settings
+from .config import load_settings, storage_target
 from .initiative.engine import InitiativeEngine
 from .initiative.scheduler import Scheduler
 from .llm.anthropic_provider import AnthropicProvider
@@ -25,7 +25,7 @@ from .telegram.bot import TelegramInterface
 async def build(settings=None):
     s = settings or load_settings()
     persona = load_persona(s.persona_dir)
-    store = await MemoryStore(s.db_path).open()
+    store = await MemoryStore(storage_target(s)).open()
     if s.embedding_provider == "voyage" and s.voyage_api_key:
         embedder = VoyageEmbedder(s.voyage_api_key, s.voyage_model)
     else:
@@ -42,9 +42,10 @@ async def build(settings=None):
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    s, engine, media = await build()
-    if not s.telegram_token:
+    settings = load_settings()
+    if not settings.telegram_token:
         raise SystemExit("TELEGRAM_BOT_TOKEN не задан (см. .env.example)")
+    s, engine, media = await build(settings)
     tg = TelegramInterface(s, engine, media)
     scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds)
     scheduler.start()
