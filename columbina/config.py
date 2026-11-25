@@ -67,7 +67,7 @@ class Settings:
     main_model: str = field(default_factory=lambda: _env("MAIN_MODEL"))
     background_model: str = field(default_factory=lambda: _env("BACKGROUND_MODEL"))
     main_effort: str = field(default_factory=lambda: _env("MAIN_EFFORT", "low"))
-    main_max_tokens: int = field(default_factory=lambda: _env_int("MAIN_MAX_TOKENS", 4000))
+    main_max_tokens: int = field(default_factory=lambda: _env_int("MAIN_MAX_TOKENS", 2500))
     use_refusal_fallbacks: bool = field(default_factory=lambda: _env_bool("USE_REFUSAL_FALLBACKS", True))
 
     # Embeddings: "voyage" | "local"

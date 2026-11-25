@@ -230,8 +230,21 @@ async def test_400_retries_without_optional_params():
 async def test_error_hints():
     from columbina.llm.base import LLMError
 
-    for code, hint in [(401, "OPENROUTER_API_KEY"), (402, "кредитов"), (404, "MAIN_MODEL")]:
+    for code, hint in [(401, "OPENROUTER_API_KEY"), (402, "лимита ключа"), (404, "MAIN_MODEL")]:
         rec = Recorder([(code, {"error": {"message": "x", "code": code}})])
         with pytest.raises(LLMError) as e:
             await provider(rec).complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))
         assert hint in str(e.value) and e.value.status == code
+
+
+async def test_402_low_credits_retries_with_smaller_max_tokens():
+    msg = "This request requires more credits, or fewer max_tokens. You requested up to 4000 tokens, but can only afford 3794."
+    rec = Recorder([(402, {"error": {"message": msg, "code": 402}}), (200, ok("Да."))])
+    r = await provider(rec).complete(LLMRequest(system=[], messages=[Message.text("user", "a")], max_tokens=4000))
+    assert r.text == "Да." and rec.requests[1]["max_tokens"] == 3694
+
+    rec2 = Recorder([(402, {"error": {"message": "can only afford 300", "code": 402}})])
+    from columbina.llm.base import LLMError
+
+    with pytest.raises(LLMError):
+        await provider(rec2).complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))

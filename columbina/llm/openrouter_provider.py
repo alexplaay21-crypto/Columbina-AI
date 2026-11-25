@@ -16,6 +16,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -194,7 +195,7 @@ class OpenRouterProvider:
                 err = data.get("error", {}) if isinstance(data, dict) else {}
                 msg = err.get("message") if isinstance(err, dict) else str(err)
                 code = r.status_code if r.status_code >= 400 else int(err.get("code", 500) or 500)
-                hint = {401: " (неверный OPENROUTER_API_KEY)", 402: " (на балансе OpenRouter нет кредитов)",
+                hint = {401: " (неверный OPENROUTER_API_KEY)", 402: " (не хватает баланса OpenRouter или месячного лимита ключа)",
                         403: " (ключ не имеет доступа к модели или модерация)",
                         404: f" (модель {params.get('model')} не найдена — проверьте MAIN_MODEL/BACKGROUND_MODEL)"}.get(code, "")
                 raise LLMError(f"openrouter {code}: {msg}{hint}", retryable=code in (408, 429) or code >= 500,
@@ -220,6 +221,13 @@ class OpenRouterProvider:
         try:
             data = await self._post(params)
         except LLMError as e:
+            afford = re.search(r"can only afford (\d+)", str(e))
+            if e.status == 402 and afford and int(afford.group(1)) >= 1200:
+                # Денег мало, но на короткий ответ хватает — просим меньший максимум.
+                params["max_tokens"] = int(afford.group(1)) - 100
+                log.warning("OpenRouter: мало кредитов, повтор с max_tokens=%s", params["max_tokens"])
+                data = await self._post(params)
+                return self.parse_response(data, params["model"], json_mode=req.json_schema is not None)
             if e.retryable or e.status not in (400, 422):
                 raise
             log.warning("OpenRouter отклонил запрос (%s) — повтор в упрощённом виде", e)
