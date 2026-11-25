@@ -22,6 +22,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message, ReactionTypeEmoji
 
 from ..cognition.engine import CognitiveEngine
+from ..cognition.introspection import admin_error_note, health_check, mood_report
 from ..config import Settings
 from ..media.links import extract_urls
 from ..media.processors import MediaProcessor
@@ -47,6 +48,7 @@ HELP = (
     "/quiet 23 9 — тихие часы, когда я не пишу первой\n"
     "/memory — что я о тебе помню\n"
     "/hall — заглянуть в Серебряный Зал\n"
+    "/mood — её состояние и ваши отношения\n"
     "/forget — забыть всё"
 )
 
@@ -97,6 +99,8 @@ class TelegramInterface:
         r.message.register(self.on_forget, Command("forget"), private)
         r.message.register(self.on_hall, Command("hall"), private)
         r.message.register(self.on_stats, Command("stats"), private)
+        r.message.register(self.on_mood, Command("mood"), private)
+        r.message.register(self.on_check, Command("check"), private)
         r.message.register(self.on_location, F.location, private)
         r.message.register(self.on_any, private)
 
@@ -224,6 +228,20 @@ class TelegramInterface:
         flowers = self.engine.emotions.flowers(emo, sit.tags)
         await m.answer(f"В Серебряном Зале тихо. Цветы сегодня {flowers}.\nЛуна: {sit.moon.describe()}.")
 
+    async def on_mood(self, m: Message) -> None:
+        if not await self._guard(m):
+            return
+        if self.s.mood_command == "admin" and m.from_user.id not in self.s.admin_user_ids:
+            return
+        await m.answer(await mood_report(self.engine, m.from_user.id))
+
+    async def on_check(self, m: Message) -> None:
+        if not m.from_user or m.from_user.id not in self.s.admin_user_ids:
+            await m.answer("Эта команда только для администратора (ADMIN_USER_IDS).")
+            return
+        await m.answer("Проверяю сервисы…")
+        await m.answer(await health_check(self.engine, self.media.stt))
+
     async def on_stats(self, m: Message) -> None:
         if not m.from_user or m.from_user.id not in self.s.admin_user_ids:
             return
@@ -274,6 +292,12 @@ class TelegramInterface:
                 log.debug("reaction failed", exc_info=True)
         if reply.parts:
             await self.send_parts(chat_id, reply.parts)
+        if uid in self.s.admin_user_ids:
+            note = admin_error_note(reply.debug)
+            if reply.debug.get("over_budget"):
+                note = "⚙️ (видно только админу) Дневной лимит расходов исчерпан: DAILY_BUDGET_USD_PER_USER"
+            if note:
+                await self.bot.send_message(chat_id, note)
 
     async def _typing(self, chat_id: int) -> None:
         try:
@@ -375,6 +399,20 @@ class TelegramInterface:
 
     # ------------------------------------------------------------------ run
     async def run(self) -> None:
+        from aiogram.types import BotCommand
+
+        try:
+            await self.bot.set_my_commands([
+                BotCommand(command="mood", description="Её состояние и ваши отношения"),
+                BotCommand(command="memory", description="Что она о тебе помнит"),
+                BotCommand(command="hall", description="Заглянуть в Серебряный Зал"),
+                BotCommand(command="name", description="Как тебя звать"),
+                BotCommand(command="city", description="Твой город (погода и время)"),
+                BotCommand(command="initiative", description="Писать ли ей первой: off | rare | normal"),
+                BotCommand(command="help", description="Все команды"),
+            ])
+        except Exception:
+            log.warning("не удалось задать меню команд", exc_info=True)
         await self.dp.start_polling(self.bot, allowed_updates=["message"])
 
 

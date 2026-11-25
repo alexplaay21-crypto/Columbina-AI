@@ -111,13 +111,13 @@ async def test_retry_on_429_and_error_mapping():
 
 
 async def test_json_schema_fallback_when_unsupported():
-    rec = Recorder([(400, {"error": {"message": "response_format not supported", "code": 400}}),
-                    (200, ok('Вот: ```json\n{"a": 1}\n```'))])
+    err = (400, {"error": {"message": "response_format not supported", "code": 400}})
+    rec = Recorder([err, err, (200, ok('Вот: ```json\n{"a": 1}\n```'))])
     p = provider(rec)
     r = await p.complete(LLMRequest(system=[], messages=[Message.text("user", "x")], tier="background",
                                     json_schema={"type": "object"}))
     assert json.loads(r.text) == {"a": 1}
-    assert "response_format" in rec.requests[0] and "response_format" not in rec.requests[1]
+    assert "response_format" in rec.requests[1] and "response_format" not in rec.requests[2]
     assert rec.requests[0]["model"] == "anthropic/claude-haiku-5.5"
 
 
@@ -215,3 +215,23 @@ def test_model_slug_normalization_and_defaults():
     assert resolved_models(s) == ("anthropic/claude-opus-5.5", "anthropic/claude-haiku-5.5")
     a = dataclasses.replace(Settings(), llm_provider="anthropic", main_model="", background_model="")
     assert resolved_models(a) == ("claude-opus-5-5", "claude-haiku-5-5")
+
+
+async def test_400_retries_without_optional_params():
+    rec = Recorder([(400, {"error": {"message": "thinking.budget_tokens not supported", "code": 400}}), (200, ok("Да."))])
+    p = provider(rec, fallback_models=["anthropic/claude-sonnet-5.5"])
+    r = await p.complete(LLMRequest(system=[SystemBlock("ядро", cache=True)], messages=[Message.text("user", "a")]))
+    assert r.text == "Да."
+    second = rec.requests[1]
+    assert "reasoning" not in second and "models" not in second
+    assert second["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+async def test_error_hints():
+    from columbina.llm.base import LLMError
+
+    for code, hint in [(401, "OPENROUTER_API_KEY"), (402, "кредитов"), (404, "MAIN_MODEL")]:
+        rec = Recorder([(code, {"error": {"message": "x", "code": code}})])
+        with pytest.raises(LLMError) as e:
+            await provider(rec).complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))
+        assert hint in str(e.value) and e.value.status == code

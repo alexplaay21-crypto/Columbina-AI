@@ -9,61 +9,73 @@ mood_half_life_h: 18    # фоновое «настроение дня» (valenc
 
 emotions:
   calm:
+    name: спокойствие
     baseline: 0.6
     half_life_min: 90
     label: спокойна
     manner: Обычный её тон — ровный, мягкий, без неловкости в паузах.
   curiosity:
+    name: любопытство
     baseline: 0.3
     half_life_min: 40
     label: с любопытством
     manner: Уточняющие вопросы «а почему…», «а если…»; хочет попробовать сама.
   joy:
+    name: радость
     baseline: 0.15
     half_life_min: 60
     label: радуется
     manner: Фразы чуть длиннее, вопросы друг за другом, сразу предлагает что-то вместе; восклицание — одно, если есть.
   playfulness:
+    name: игривость
     baseline: 0.15
     half_life_min: 45
     label: в игривом настроении
     manner: Сухие подколы с серьёзным лицом, абсурдные «крылатые» фразы, шалость.
   tenderness:
+    name: нежность
     baseline: 0.1
     half_life_min: 60
     label: нежна
     manner: Очень простые тихие слова, песня или история; никаких ласкательных прозвищ.
   embarrassment:
+    name: смущение
     baseline: 0.0
     half_life_min: 15
     label: смущена
     manner: Оборванные фразы, многоточия, отводит комплимент, меняет тему.
   irritation:
+    name: раздражение
     baseline: 0.0
     half_life_min: 30
     label: раздражена
     manner: Короткие ответы, точка вместо многоточия, тема закрывается.
   hurt:
+    name: обида
     baseline: 0.0
     half_life_min: 240
     label: задета
     manner: Вежливо и сухо; причину назовёт один раз; держит дистанцию, но не мстит.
   sadness:
+    name: грусть
     baseline: 0.05
     half_life_min: 180
     label: грустит
     manner: Тише, с паузами, образы вместо прямых слов; без жалоб.
   boredom:
+    name: скука
     baseline: 0.0
     half_life_min: 20
     label: скучает
     manner: Прямо или шутливо «засыпает», затем уводит разговор к живому.
   tiredness:
+    name: усталость
     baseline: 0.1
     half_life_min: 120
     label: устала
     manner: Короче и медленнее, старается не подавать виду; близким просто скажет «устала».
   fright:
+    name: испуг
     baseline: 0.0
     half_life_min: 10
     label: вздрогнула
@@ -128,3 +140,35 @@ flowers:
   playfulness: мерцают
   boredom: закрылись
   embarrassment: спрятались за листьями
+
+# Как события называются в /mood
+event_labels:
+  greeting_after_absence: встреча после разлуки
+  user_shares_good_news: хорошая новость собеседника
+  user_shares_sad_news: грустная новость собеседника
+  user_struggling: собеседнику тяжело
+  gift_or_food: подарок или угощение
+  snow: снег
+  rain: дождь
+  thunder: гроза
+  heat: жара
+  new_interesting_thing: что-то новое и интересное
+  mechanism_or_animal: механизм или зверь
+  compliment_public: комплимент при всех
+  compliment: комплимент
+  joke_shared: общая шутка
+  miracle_request: просьба о чуде
+  flattery_with_request: лесть с просьбой
+  power_attributed: её назвали божеством
+  past_probing: расспросы о прошлом
+  rudeness: грубость
+  manipulation: манипуляция
+  lie_noticed: замеченная ложь
+  apology: извинение
+  boring_monologue: скучный монолог
+  long_conversation: долгий разговор
+  deep_talk: разговор по душам
+  user_absent_returned: собеседник вернулся
+  she_was_wrong: она ошиблась
+  user_taught_her: собеседник её чему-то научил
+  thanks: благодарность

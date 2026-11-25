@@ -194,25 +194,48 @@ class OpenRouterProvider:
                 err = data.get("error", {}) if isinstance(data, dict) else {}
                 msg = err.get("message") if isinstance(err, dict) else str(err)
                 code = r.status_code if r.status_code >= 400 else int(err.get("code", 500) or 500)
-                raise LLMError(f"openrouter {code}: {msg}", retryable=code in (408, 429) or code >= 500)
+                hint = {401: " (неверный OPENROUTER_API_KEY)", 402: " (на балансе OpenRouter нет кредитов)",
+                        403: " (ключ не имеет доступа к модели или модерация)",
+                        404: f" (модель {params.get('model')} не найдена — проверьте MAIN_MODEL/BACKGROUND_MODEL)"}.get(code, "")
+                raise LLMError(f"openrouter {code}: {msg}{hint}", retryable=code in (408, 429) or code >= 500,
+                               status=code)
             return data
         raise LLMError("retries exhausted")
+
+    @staticmethod
+    def _simplified(params: dict[str, Any]) -> dict[str, Any]:
+        """Запрос без необязательных опций — на случай, если провайдер модели их не принимает (HTTP 400)."""
+        p = json.loads(json.dumps(params))
+        p.pop("reasoning", None)
+        p.pop("models", None)
+        for m in p["messages"]:
+            if isinstance(m.get("content"), list):
+                for part in m["content"]:
+                    if isinstance(part, dict) and "cache_control" in part:
+                        part["cache_control"] = {"type": "ephemeral"}
+        return p
 
     async def complete(self, req: LLMRequest) -> LLMResponse:
         params = self.build_params(req)
         try:
             data = await self._post(params)
         except LLMError as e:
-            # Модель не умеет json_schema — повторяем с инструкцией в тексте.
-            if "response_format" in params and not e.retryable:
-                log.info("json_schema не поддержан (%s) — повтор без response_format", e)
+            if e.retryable or e.status not in (400, 422):
+                raise
+            log.warning("OpenRouter отклонил запрос (%s) — повтор в упрощённом виде", e)
+            params = self._simplified(params)
+            try:
+                data = await self._post(params)
+            except LLMError as e2:
+                # Модель не умеет json_schema — повторяем с инструкцией в тексте.
+                if "response_format" not in params or e2.retryable:
+                    raise
+                log.info("json_schema не поддержан (%s) — повтор без response_format", e2)
                 params.pop("response_format")
                 schema = json.dumps(req.json_schema, ensure_ascii=False)
                 params["messages"].append({"role": "user", "content":
                                            f"Ответь ТОЛЬКО одним JSON-объектом по этой схеме, без пояснений:\n{schema}"})
                 data = await self._post(params)
-            else:
-                raise
         return self.parse_response(data, params["model"], json_mode=req.json_schema is not None)
 
     @staticmethod

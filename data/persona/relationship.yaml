@@ -69,3 +69,26 @@ events:
 milestones:
   was_there_in_hard_time: [user_was_there, user_opened_up]
   shared_memories: [shared_joke, shared_activity]
+
+# Как события называются в /mood
+event_labels:
+  quality_conversation: спокойный разговор
+  shared_activity: общее дело
+  user_accepts_quirks: принял(а) её странности
+  user_asks_nothing_back: ничего не просил(а) взамен
+  shared_joke: общая шутка
+  user_was_there: был(а) рядом в трудный момент
+  user_opened_up: поделился(ась) трудным
+  apology_sincere: искреннее извинение
+  returned_after_absence: вернулся(ась) после тишины
+  flattery_with_request: лесть с просьбой
+  miracle_request: просьба о чуде
+  pressure_open_up: давление «откройся»
+  past_probing: расспросы о прошлом
+  rudeness: грубость
+  lie: ложь
+  manipulation: манипуляция
+  using_her: использование
+milestone_labels:
+  was_there_in_hard_time: был(а) рядом в трудный момент
+  shared_memories: есть общие воспоминания

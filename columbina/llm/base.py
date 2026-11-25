@@ -125,9 +125,10 @@ class LLMResponse:
 class LLMError(Exception):
     """Ошибка провайдера, после которой стоит ответить «бледным» сообщением."""
 
-    def __init__(self, message: str, retryable: bool = True):
+    def __init__(self, message: str, retryable: bool = True, status: int | None = None):
         super().__init__(message)
         self.retryable = retryable
+        self.status = status
 
 
 class LLMProvider(Protocol):

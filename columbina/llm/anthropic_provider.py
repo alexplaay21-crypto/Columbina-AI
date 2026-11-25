@@ -159,7 +159,7 @@ class AnthropicProvider:
             response = await self.client.beta.messages.create(**params)
         except anthropic.BadRequestError as e:
             log.error("LLM bad request: %s", e.message)
-            raise LLMError(f"bad request: {e.message}", retryable=False) from e
+            raise LLMError(f"bad request: {e.message}", retryable=False, status=400) from e
         except (anthropic.AuthenticationError, anthropic.PermissionDeniedError, anthropic.NotFoundError) as e:
             raise LLMError(f"auth/model error: {e}", retryable=False) from e
         except anthropic.RateLimitError as e:
