@@ -85,6 +85,8 @@ COMMANDS: list[tuple[str, str, str, bool, bool, str]] = [
     ("reset", "on_reset", "Сбросить текущий разговор", False, False, "Данные"),
     ("stats", "on_stats", "Статистика", False, False, "Данные"),
     ("check", "on_check", "Проверка сервисов", False, True, "Система"),
+    ("groupmode", "on_groupmode", "В группе: когда отвечать — mention | active | all", False, False, "Группа"),
+    ("greet", "on_greet", "В группе: здороваться с новенькими — on | off", False, False, "Группа"),
 ]
 
 
@@ -129,6 +131,9 @@ class TelegramInterface:
         from .menu import MenuController
 
         self.menus = MenuController(engine, settings.admin_user_ids)
+        from .groups import GroupLogic
+
+        self.groups = GroupLogic(engine, settings.group_max_replies)
         self._register()
 
     # ------------------------------------------------------------------ access
@@ -153,28 +158,38 @@ class TelegramInterface:
     # ------------------------------------------------------------------ handlers
     def _register(self) -> None:
         r = self.router
-        chat_ok = F.chat.type == ChatType.PRIVATE
-        if self.s.groups_enabled:
-            chat_ok = F.chat.type.in_({ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP})
+        # Группы фильтруются внутри обработчиков (GROUPS_ENABLED проверяется на каждом сообщении).
+        chat_ok = F.chat.type.in_({ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP})
         r.message.register(self.on_start, CommandStart(), chat_ok)
         for name, method, *_ in COMMANDS:
             if name == "start":
                 continue
             r.message.register(getattr(self, method), Command(name), chat_ok)
         r.callback_query.register(self.on_callback, F.data.regexp(r"^[macxtf]:"))
+        r.my_chat_member.register(self.on_my_chat_member)
         r.message.register(self.on_location, F.location, chat_ok)
         r.message.register(self.on_any, chat_ok)
 
+    GROUP_OK_COMMANDS = {"start", "help", "about", "groupmode", "greet"}
+
     async def _guard(self, m: Message) -> bool:
+        if m.chat.type != ChatType.PRIVATE:
+            if not self.s.groups_enabled:
+                return False
+            cmd = (m.text or m.caption or "").split()[0].lstrip("/").split("@")[0].lower() if (m.text or m.caption) else ""
+            if cmd and cmd not in self.GROUP_OK_COMMANDS:
+                await m.answer("Это личное — напиши мне в личку.")  # память и данные не показываю при всех
+                return False
         if not m.from_user or not self.allowed(m.from_user.id):
             await m.answer("Хм. Мы, кажется, не знакомы. Я пока говорю только со своими.")
             return False
-        await self.engine.store.get_or_create_user(m.from_user.id, m.chat.id, m.from_user.first_name)
+        # chat_id личного чата = id пользователя: инициатива уходит в личку, даже если познакомились в группе
+        await self.engine.store.get_or_create_user(m.from_user.id, m.from_user.id, m.from_user.first_name)
         return True
 
     async def on_start(self, m: Message) -> None:
         if await self._guard(m):
-            await m.answer(GREETING)
+            await m.answer(GREETING if m.chat.type == ChatType.PRIVATE else self.groups.greeting(m.chat.title))
 
     async def on_help(self, m: Message) -> None:
         if await self._guard(m):
@@ -581,8 +596,9 @@ class TelegramInterface:
 
     # ------------------------------------------------------------------ messages of any type
     async def on_any(self, m: Message) -> None:
-        if m.chat.type != ChatType.PRIVATE and not await self._addressed_in_group(m):
-            return  # в группах отвечаю, только когда обращаются ко мне
+        if m.chat.type != ChatType.PRIVATE:
+            await self.on_group_message(m)
+            return
         if not await self._guard(m):
             return
         uid = m.from_user.id
@@ -591,6 +607,82 @@ class TelegramInterface:
         if pend.timer:
             pend.timer.cancel()
         pend.timer = asyncio.create_task(self._fire_later(uid, m.chat.id))
+
+    # ---------------- группы ----------------
+    def group_allowed(self, m: Message) -> bool:
+        if m.chat.id in self.s.allowed_group_ids:
+            return True
+        return bool(m.from_user) and self.allowed(m.from_user.id)
+
+    async def on_group_message(self, m: Message) -> None:
+        if not self.s.groups_enabled or not m.from_user or m.from_user.is_bot:
+            return
+        if m.new_chat_members:
+            if (await self.engine.store.get_setting(m.chat.id, "greet", "on")) != "off":
+                names = [u.first_name for u in m.new_chat_members if not u.is_bot]
+                if names:
+                    await m.answer(self.groups.welcome(names))
+            return
+        if not self.group_allowed(m):
+            return
+        me = await self.bot.me()
+        if not await self.groups.should_reply(m, self.bot.id, me.username):
+            await self.groups.remember_context(m)  # слышит, но молчит
+            return
+        conv = m.chat.id
+        await self.engine.store.get_or_create_user(conv, conv, m.chat.title)
+
+        async def framed():
+            return self.groups.frame(await self.to_percepts(m), m)
+
+        pend = self._pending.setdefault(conv, _Pending())
+        pend.items.append((m, asyncio.create_task(framed())))
+        if pend.timer:
+            pend.timer.cancel()
+        pend.timer = asyncio.create_task(self._fire_later(conv, conv))
+
+    async def _is_group_admin(self, chat_id: int, user_id: int) -> bool:
+        if user_id in self.s.admin_user_ids:
+            return True
+        try:
+            member = await self.bot.get_chat_member(chat_id, user_id)
+            return member.status in ("administrator", "creator")
+        except Exception:
+            return False
+
+    async def on_groupmode(self, m: Message, command: CommandObject) -> None:
+        if m.chat.type == ChatType.PRIVATE:
+            await m.answer("Это команда для группы: /groupmode mention | active | all")
+            return
+        if not await self._is_group_admin(m.chat.id, m.from_user.id):
+            await m.answer("Режим меняют только админы группы.")
+            return
+        mode = (command.args or "").strip().lower()
+        from .groups import MODES
+
+        if mode not in MODES:
+            cur = await self.groups.mode(m.chat.id)
+            await m.answer(f"Сейчас: {cur}.\nmention — отвечаю, когда зовут; active — иногда вступаю сама "
+                           "(на вопросы о том, что мне интересно); all — отвечаю на всё.")
+            return
+        await self.engine.store.set_setting(m.chat.id, "group_mode", mode)
+        await m.answer({"mention": "Хорошо. Буду говорить, только когда позовёте.",
+                        "active": "Хорошо. Иногда буду вступать сама.", "all": "Хорошо. Буду отвечать на всё."}[mode])
+
+    async def on_greet(self, m: Message, command: CommandObject) -> None:
+        if m.chat.type == ChatType.PRIVATE or not await self._is_group_admin(m.chat.id, m.from_user.id):
+            await m.answer("Это команда для админов группы: /greet on | off")
+            return
+        val = "off" if (command.args or "").strip().lower() in ("off", "выкл", "нет") else "on"
+        await self.engine.store.set_setting(m.chat.id, "greet", val)
+        await m.answer("Буду здороваться с новенькими." if val == "on" else "Не буду здороваться с новенькими.")
+
+    async def on_my_chat_member(self, update) -> None:
+        if not self.s.groups_enabled or update.chat.type == ChatType.PRIVATE:
+            return
+        if update.new_chat_member.status in ("member", "administrator") and \
+                update.old_chat_member.status in ("left", "kicked"):
+            await self.bot.send_message(update.chat.id, self.groups.greeting(update.chat.title))
 
     async def _fire_later(self, uid: int, chat_id: int) -> None:
         try:
@@ -625,6 +717,8 @@ class TelegramInterface:
         if reply.parts:
             # Если собеседник отвечал на конкретное сообщение — отвечаем «реплаем» на его сообщение.
             quoted = next((m for m, _ in reversed(pend.items) if m.reply_to_message), None) if reply.quote else None
+            if uid < 0:  # в группе всегда отвечает «реплаем» — видно, кому
+                quoted = pend.items[-1][0]
             heard = any(m.voice or m.video_note for m, _ in pend.items)
             self._last_was_circle[uid] = any(m.video_note for m, _ in pend.items)
             if not await self._maybe_voice(uid, chat_id, reply, heard, quoted.message_id if quoted else None):
@@ -807,13 +901,6 @@ class TelegramInterface:
                     p.kind, p.channel, p.note = "forward", "read", f"пересланное сообщение {forward} — это чужие слова"
         return out
 
-    async def _addressed_in_group(self, m: Message) -> bool:
-        if m.reply_to_message and m.reply_to_message.from_user and m.reply_to_message.from_user.id == self.bot.id:
-            return True
-        me = await self.bot.me()
-        text = (m.text or m.caption or "").lower()
-        return bool(me.username and f"@{me.username.lower()}" in text) or "коломбин" in text
-
     def _reply_percept(self, m: Message) -> Percept | None:
         """Собеседник ответил на конкретное сообщение (свайп/«Ответить») — это важный контекст."""
         r = m.reply_to_message
@@ -842,7 +929,7 @@ class TelegramInterface:
         except Exception:
             log.warning("не удалось задать меню команд", exc_info=True)
         await self.load_stickers()
-        await self.dp.start_polling(self.bot, allowed_updates=["message", "callback_query"])
+        await self.dp.start_polling(self.bot, allowed_updates=["message", "callback_query", "my_chat_member"])
 
 
 async def _const(text: str) -> str:

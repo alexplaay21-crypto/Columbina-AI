@@ -49,6 +49,8 @@ class Settings:
     allowed_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ALLOWED_USER_IDS"))
     admin_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ADMIN_USER_IDS"))
     groups_enabled: bool = field(default_factory=lambda: _env_bool("GROUPS_ENABLED", False))
+    allowed_group_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ALLOWED_GROUP_IDS"))
+    group_max_replies: int = field(default_factory=lambda: _env_int("GROUP_MAX_REPLIES_PER_10MIN", 12))
     mood_command: str = field(default_factory=lambda: _env("MOOD_COMMAND", "all").lower())  # all | admin
     debounce_seconds: float = field(default_factory=lambda: _env_float("DEBOUNCE_SECONDS", 1.5))
 

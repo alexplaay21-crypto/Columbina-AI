@@ -7,7 +7,7 @@ import datetime as dt
 
 import pytest
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import EditMessageText, SendDocument, SendMessage, TelegramMethod
+from aiogram.methods import EditMessageText, GetMe, SendDocument, SendMessage, TelegramMethod
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from columbina.media.links import SafeFetcher
@@ -32,6 +32,8 @@ class FakeSession(BaseSession):
         now = dt.datetime.now()
         if isinstance(method, (SendMessage, EditMessageText)):
             return Message(message_id=100 + len(self.calls), date=now, chat=chat, text=method.text)
+        if isinstance(method, GetMe):
+            return User(id=123456, is_bot=True, first_name="Коломбина", username="columbina_bot")
         if isinstance(method, SendDocument):
             return Message(message_id=100 + len(self.calls), date=now, chat=chat)
         return True
