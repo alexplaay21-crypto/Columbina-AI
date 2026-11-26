@@ -9,6 +9,8 @@ from typing import Any
 
 ALLOWED_REACTIONS = {"🕊", "🌚", "🐳", "🍓", "😴", "🤔", "👀", "❤", "☃", "🥱", "🙈", "🤗", "🔥", "😁", "🤯", "😢"}
 REACT_RE = re.compile(r"<react>\s*([^<]{1,8})\s*</react>")
+EMPTY_TAG_RE = re.compile(r"<(react|sticker|gif|clip)>\s*</\1>", re.I)
+LONE_TAG_RE = re.compile(r"</?(?:react|sticker|gif|clip)>", re.I)
 # Модели без опыта с нашим форматом иногда пишут реакцию словами — превращаем её в настоящую реакцию.
 TEXT_REACT_RE = re.compile(
     r"^\s*[\[(]?\s*(?:реакция|reaction|react)\s*[:：]?\s*([^\s\])]{1,4})\s*[\])]?[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
@@ -68,6 +70,7 @@ def parse_reply(text: str) -> ParsedReply:
     clip = cm.group(1).strip() if cm else None
     raw = CLIP_RE.sub("", raw)
     raw = GIF_RE.sub("", SILENCE_RE.sub("", STICKER_RE.sub("", VOICE_RE.sub("", raw))))
+    raw = EMPTY_TAG_RE.sub("", raw)  # пустые <react></react> и обломки тегов не уходят собеседнику текстом
     m = REACT_RE.search(raw) or TEXT_REACT_RE.search(raw)
     if m:
         emo = m.group(1).strip().replace("\ufe0f", "")
@@ -75,6 +78,7 @@ def parse_reply(text: str) -> ParsedReply:
             reaction = emo
         raw = TEXT_REACT_RE.sub("", REACT_RE.sub("", raw)).strip()
     # Обломки эмодзи (склейка U+200D, селектор U+FE0F) остаются после вырезания тегов — убираем по краям.
+    raw = LONE_TAG_RE.sub("", raw)
     parts = [q for p in SPLIT_RE.split(raw) if (q := p.strip().strip("\u200d\ufe0f").strip())]
     if len(parts) == 1 and len(raw) > 320:
         paras = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]

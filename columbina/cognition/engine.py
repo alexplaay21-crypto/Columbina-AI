@@ -259,22 +259,36 @@ class CognitiveEngine:
                 extra_obs.append(f"ты писала первой {int(hours)} ч назад, а ответа не было — тебе немного обидно; "
                                  "можешь показать это одной сухой фразой или иронией и дальше говорить нормально")
 
-        # Флирт: медленная романтика — по стадии дружбы.
+        # Флирт: медленная романтика — по стадии дружбы, но всегда живо, без холодной стены.
         if "flirt" in appr.conditions:
-            close = rel.stage >= 4
-            emo = self.emotions.apply(emo, "flirt_close" if close else "flirt_early", cause="флирт")
-            extra_obs.append(
-                "собеседник флиртует; вы правда близки — можешь ответить тепло и честно о своих чувствах, "
-                "но без зависимости и ревности" if close else
-                "собеседник флиртует, а вы ещё мало знакомы — смутись или ответь игриво, всерьёз не подыгрывай "
-                "и не отталкивай грубо")
+            emo = self.emotions.apply(emo, "flirt_close" if rel.stage >= 3 else "flirt_early", cause="флирт")
+            if rel.stage >= 4:
+                extra_obs.append("собеседник флиртует; вы правда близки — отвечай тепло и смело: флиртуй в ответ, "
+                                 "можешь признаться в чувствах, быть нежной и дразнить; без зависимости и ревности")
+            elif rel.stage == 3:
+                extra_obs.append("собеседник флиртует; вы уже привыкли друг к другу — можешь флиртовать в ответ, "
+                                 "дразнить, признать, что тебе приятно; о любви говорить пока рано")
+            else:
+                extra_obs.append("собеседник флиртует, а вы ещё мало знакомы — смутись или ответь игриво, можешь "
+                                 "легко подколоть или пофлиртовать в ответ, но всерьёз не подыгрывай и не отталкивай грубо")
+        if "advance" in appr.conditions:
+            extra_obs.append("собеседник откровенно пристаёт — не читай нотаций и не отвечай холодно или шаблонно: "
+                             "ответь по-живому — смутись, подколи, отшутись" +
+                             (" или пофлиртуй в ответ" if rel.stage >= 3 else "") +
+                             "; подробную сцену не пиши — своди к намёку, как в фильме, где кадр обрывается")
+        elif "adult_topic" in appr.conditions:
+            extra_obs.append("тема взрослая — говори открыто и с интересом, своим мнением, можно с юмором и прямо; "
+                             "без морали, без смущённого ухода и без «давай сменим тему»")
 
         # Долгий разговор утомляет.
         recent_count = sum(1 for m in await self.store.last_messages(user_id, 80) if ts - m.created_at < SESSION_GAP)
         if recent_count and recent_count % 30 == 0:
             emo = self.emotions.apply(emo, "long_conversation", cause="долгий разговор")
 
-        if not user.timezone and not user.city:
+        her_last = [m.text for m in await self.store.last_messages(user_id, 12, role="assistant")]
+        asked_city = any(re.search(r"город|где ты (?:сейчас|живёшь|живешь|находишься)|откуда ты|где ты\?", t, re.I)
+                         for t in her_last)
+        if not user.timezone and not user.city and not asked_city and not appr.conditions & {"flirt", "advance"}:
             extra_obs.append("ты не знаешь, где собеседник и сколько у него времени (время выше — по Москве); "
                              "если к месту, можешь спросить город")
         prev = [m.text for m in history[-2:]] if (history := await self.store.active_messages(user_id)) else []
@@ -298,7 +312,6 @@ class CognitiveEngine:
             extra_obs.append("можешь ответить голосом — начни ответ с <voice>" + (
                 "; собеседник прислал голосовое, ответ голосом будет естественным" if heard else
                 " (например, тихо на ночь или спеть колыбельную), но не часто"))
-        her_last = [m.text for m in await self.store.last_messages(user_id, 12, role="assistant")]
         recent_media = any("<sticker>" in t or "<gif>" in t for t in her_last)
         strong_moment = bool(set(appr.emotion_events) & {"user_shares_good_news", "joke_shared", "gift_or_food", "snow",
                                                        "user_surprising_news", "compliment", "flirt_early"})

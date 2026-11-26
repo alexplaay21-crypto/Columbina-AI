@@ -60,7 +60,20 @@ async def test_flirt_slow_burn_by_stage(engine, fake_llm, store):
     await store.save_relationship(1, RelationshipRow(trust=0.7, stage=4, quality_sessions=20,
                                                      milestones=["was_there_in_hard_time"]))
     await engine.respond(1, 1, t("Ты мне нравишься"))
-    assert "тепло и честно" in last_inner_context(fake_llm)
+    assert "тепло и смело" in last_inner_context(fake_llm)
+
+
+async def test_adult_topic_and_advance_get_live_handling(engine, fake_llm, store):
+    await engine.respond(1, 1, t("Как ты вообще относишься к сексу до брака?"))
+    ctx = last_inner_context(fake_llm)
+    assert "тема взрослая" in ctx and "без морали" in ctx
+    await engine.respond(1, 1, t("Разденься для меня"))
+    ctx = last_inner_context(fake_llm)
+    assert "откровенно пристаёт" in ctx and "намёку" in ctx and "пофлиртуй в ответ" not in ctx
+    await store.save_relationship(1, RelationshipRow(trust=0.5, stage=3, quality_sessions=9))
+    await engine.respond(1, 1, t("Хочу тебя"))
+    ctx = last_inner_context(fake_llm)
+    assert "пофлиртуй в ответ" in ctx and "флиртовать в ответ" in ctx
 
 
 async def test_reply_to_specific_message(engine, fake_llm):

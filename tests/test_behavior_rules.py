@@ -372,3 +372,8 @@ def test_de_lore_trims_moon_talk_when_off_topic(persona):
     assert "луной" in g.de_lore(reply, ["Луна сегодня яркая."], "что думаешь про луну?")[0]
     # не оставляет пустой ответ
     assert g.de_lore(["Куухенки шумели весь день."], ["Луна."], "устал") == ["Куухенки шумели весь день."]
+
+
+def test_empty_react_tag_not_sent_as_text():
+    p = parse_reply("<react></react>\nТы говоришь это в три часа ночи")
+    assert p.parts == ["Ты говоришь это в три часа ночи"] and p.reaction is None
