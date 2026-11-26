@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass
 
@@ -15,6 +16,10 @@ import numpy as np
 from ..persona.loader import KnowledgeChunk
 from .embeddings import Embedder, cosine, stems
 from .store import Episode, Fact, MemoryStore
+
+
+SELF_Q = re.compile(r"(?<!\w)(?:ты|тебя|тебе|тобой|твой|твоя|твоё|твое|твои|твоих|твоего|сама|себя|о себе)(?!\w)",
+                    re.IGNORECASE)
 
 
 @dataclass
@@ -121,16 +126,19 @@ class MemoryRetriever:
 
         # --- её биография ---
         persona_scored: list[tuple[KnowledgeChunk, float]] = []
+        about_her = bool(SELF_Q.search(query))
         for c in persona_chunks:
             if c.min_stage > stage:
                 continue
             kw = _keyword_overlap(q_stems, " ".join(c.tags))
-            tag_hit = any(t in query.lower() for t in c.tags if len(t) > 3)
+            # тег совпал, если все его основы есть в запросе («как выглядишь» ~ «как ты выглядишь»)
+            tag_hit = any((ts := set(stems(t))) and ts <= q_stems for t in c.tags if len(t) > 3)
             sim = cosine(q_vec, self._persona_vecs.get(c.id))
             score = 0.5 * sim + 0.3 * kw + (0.35 if tag_hit else 0.0)
             persona_scored.append((c, score))
         persona_scored.sort(key=lambda t: t[1], reverse=True)
-        persona = [c for c, s in persona_scored[:3] if s >= 0.38][:2]
+        # Вопрос о ней самой («а ты…», «твой…») — охотнее достаёт свою биографию.
+        persona = [c for c, s in persona_scored[:3] if s >= (0.26 if about_her else 0.38)][: 3 if about_her else 2]
 
         await self.store.mark_recalled([e.id for e, _ in top])
         return Recall(episodes=top, facts=chosen_facts, persona=persona, her_life=her_life[-2:])

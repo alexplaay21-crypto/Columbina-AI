@@ -67,13 +67,15 @@ async def test_voice_and_sticker_hints_and_filter(engine, fake_llm):
     engine.voice_available = True
     engine.sticker_emojis = ["🌙", "😴"]
     fake_llm.script = lambda r: "<voice><sticker>🌙</sticker>Спи." if r.tier == "main" else "{}"
-    r = await engine.respond(1, 1, [Percept("voice", True, "transcript", "голосовое", text="[голосовое]: спокойной ночи",
-                                            history="x")])
+    r = await engine.respond(1, 1, [Percept("voice", True, "transcript", "голосовое",
+                                            text="[голосовое]: представляешь, я сдал экзамен!", history="x")])
     ctx = last_inner_context(fake_llm)
     assert "<voice>" in ctx and "голосовое, ответ голосом" in ctx and "<sticker>" in ctx
     assert r.voice and r.sticker == "🌙" and r.parts == ["Спи."]
-    fake_llm.script = lambda r: "<sticker>🐉</sticker>Ну." if r.tier == "main" else "{}"
-    assert (await engine.respond(1, 1, t("ну"))).sticker is None  # чужого стикера нет
+    fake_llm.script = lambda r: "<sticker>🌙</sticker>Ну." if r.tier == "main" else "{}"
+    r2 = await engine.respond(1, 1, t("Ура, меня повысили!"))
+    assert r2.sticker is None  # только что был стикер — следующий не раньше чем через ~12 её сообщений
+    assert "<sticker>" not in last_inner_context(fake_llm)
 
 
 async def test_telegram_sends_voice_in_mirror_mode_and_sticker(tg, tmp_path):  # noqa: F811

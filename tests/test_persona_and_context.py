@@ -18,7 +18,7 @@ def text(t: str) -> list[Percept]:
 
 def test_core_prompt_is_compact(persona):
     # Ядро — компактно; полное досье в запрос не идёт.
-    assert estimate_tokens(persona.core_prompt) < 3200
+    assert estimate_tokens(persona.core_prompt) < 3600  # с автопортретом: внешность, дом, вкусы, близкие
     full = (persona.root / "source" / "dossier_main.md").read_text(encoding="utf-8")
     assert len(full) > 3 * len(persona.core_prompt)
 
@@ -166,3 +166,17 @@ async def test_lullaby_at_night_when_cant_sleep(engine, fake_llm):
     night = datetime(2026, 11, 25, 22, 30, tzinfo=timezone.utc)  # 01:30 по Москве
     await engine.respond(1, 1, text("не могу уснуть"), now=night)
     assert "Dormi cara columbula" in last_inner_context(fake_llm)
+
+
+
+def test_core_prompt_knows_her_appearance_and_adult_topics(persona):
+    p = persona.core_prompt
+    for must in ["малиновыми прядями", "маска", "босиком", "кресло-качалка", "Сандроне", "Мат собеседника"]:
+        assert must in p, must
+
+
+@pytest.mark.asyncio
+async def test_self_question_pulls_her_biography(engine, fake_llm):
+    await engine.respond(1, 1, text("а как ты выглядишь?"))
+    assert "малиновыми прядями" in last_inner_context(fake_llm) or "белом" in last_inner_context(fake_llm) \
+        or "Хрупкая" in last_inner_context(fake_llm)

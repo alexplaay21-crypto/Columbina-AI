@@ -17,6 +17,7 @@ STICKER_RE = re.compile(r"<sticker>\s*([^<]{1,8})\s*</sticker>", re.I)
 SILENCE_RE = re.compile(r"<silence\s*/?>", re.I)
 GIF_RE = re.compile(r"<gif>\s*([^<]{2,60})\s*</gif>", re.I)
 CLIP_RE = re.compile(r"<clip>\s*([^<]{1,80})\s*</clip>", re.I)
+EMOJI = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF\U0001F900-\U0001F9FF]\ufe0f?")
 ASSISTANTISH = re.compile(r"отличный вопрос|рада помочь|вот несколько|надеюсь,? это поможет|если хочешь,? (?:я )?могу|"
                           r"не стесняйся|в заключение|подытожим|во-первых.*во-вторых|я здесь, чтобы", re.I | re.S)
 
@@ -113,6 +114,13 @@ class StyleGuard:
         fixed2 = re.sub(r"!(?!\?)", _excl, fixed)
         if fixed2 != fixed:
             v.soft_fixes.append("exclamations")
+        # Эмодзи — не больше одного на ответ.
+        found = EMOJI.findall(fixed2)
+        if len(found) > 1:
+            first = found[0]
+            fixed2 = re.sub(r"[ \t]+([.,!?…])", r"\1", EMOJI.sub("", fixed2))
+            fixed2 = fixed2.rstrip() + " " + first if fixed2.rstrip().endswith(tuple(".!?…")) else fixed2
+            v.soft_fixes.append("emoji")
         fixed = re.sub(r"[ \t]{2,}", " ", fixed2)
         fixed = re.sub(r"\n{3,}", "\n\n", fixed).strip()
         v.fixed_text = fixed
@@ -128,6 +136,8 @@ class StyleGuard:
                 hints.append("не обращайся по имени")
         if sum(1 for r in window if "\n- " in r or re.search(r"^\d\. ", r, re.M)) >= 2:
             hints.append("без списков — это разговор")
+        if sum(1 for r in window[-4:] if EMOJI.search(r.split("</react>")[-1])) >= 2:
+            hints.append("без эмодзи в этот раз — ты ставила их слишком часто")
         # Защита характера: если начинает звучать как ассистент — мягко возвращаем к себе.
         drift = sum(1 for r in window if ASSISTANTISH.search(r))
         if drift >= 2:

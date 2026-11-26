@@ -283,3 +283,17 @@ async def test_openai_compatible_fallback_models():
     r = await p.complete(LLMRequest(system=[], messages=[Message.text("user", "a")]))
     assert r.text == "Да." and [b["model"] for b in seen] == ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
     assert "reasoning" not in seen[0] and "models" not in seen[0] and seen[0]["reasoning_effort"] == "low"
+
+
+def test_emoji_limited(persona):
+    g = StyleGuard(persona.style)
+    assert g.check("Ну да 👀 ладно 🕊 и 🌙.").fixed_text.count("👀") + g.check("Ну да 👀 ладно 🕊.").fixed_text.count("🕊") <= 2
+    assert sum(ch in "👀🕊🌙" for ch in g.check("Ну да 👀 ладно 🕊 и 🌙.").fixed_text) == 1
+    assert any("эмодзи" in h for h in g.overused(["Привет 👀", "Да 🕊", "Ну"]))
+
+
+async def test_no_emoji_two_replies_in_a_row(engine, fake_llm):
+    fake_llm.script = lambda r: "Привет 👀" if r.tier == "main" else "{}"
+    r1 = await engine.respond(1, 1, [Percept("text", True, "text", "", text="хай", history="хай")])
+    r2 = await engine.respond(1, 1, [Percept("text", True, "text", "", text="как ты", history="как ты")])
+    assert "👀" in r1.parts[0] and "👀" not in r2.parts[0]

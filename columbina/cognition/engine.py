@@ -43,7 +43,7 @@ from .appraisal import appraise
 from .context_builder import TurnContext, gap_marker, history_to_text_messages, render_inner_context
 from .reflection import Reflector
 from .situation import Situation, build_situation
-from .style import ParsedReply, StyleGuard, parse_reply
+from .style import EMOJI, ParsedReply, StyleGuard, parse_reply
 
 log = logging.getLogger(__name__)
 
@@ -297,13 +297,18 @@ class CognitiveEngine:
             extra_obs.append("можешь ответить голосом — начни ответ с <voice>" + (
                 "; собеседник прислал голосовое, ответ голосом будет естественным" if heard else
                 " (например, тихо на ночь или спеть колыбельную), но не часто"))
-        if self.gifs_available:
-            extra_obs.append("можешь изредка ответить гифкой: <gif>короткий запрос по-английски</gif>")
+        her_last = [m.text for m in await self.store.last_messages(user_id, 12, role="assistant")]
+        recent_media = any("<sticker>" in t or "<gif>" in t for t in her_last)
+        strong_moment = bool(set(appr.emotion_events) & {"user_shares_good_news", "joke_shared", "gift_or_food", "snow",
+                                                       "user_surprising_news", "compliment", "flirt_early"})
+        allow_media = not recent_media and strong_moment  # стикер/гифка — редкость, только на яркий момент
+        if self.gifs_available and allow_media:
+            extra_obs.append("если очень к месту, можно ответить гифкой: <gif>короткий запрос по-английски</gif> — редко")
         own = [m["emoji"] for m in await self.store.media(user_id, "sticker") if m["emoji"]]
         emojis = list(dict.fromkeys(self.sticker_emojis + own))
-        if emojis:
+        if emojis and allow_media:
             extra_obs.append("у тебя есть стикеры (" + " ".join(emojis[:24]) +
-                             ") — изредка можешь добавить один: <sticker>эмодзи</sticker>")
+                             ") — момент яркий, можно добавить один: <sticker>эмодзи</sticker>, но не обязательно")
 
         # --- память ---
         history = await self.store.active_messages(user_id)
@@ -354,9 +359,15 @@ class CognitiveEngine:
             return Reply(parts=[random.choice(PALE_REPLIES)], debug={"error": str(e)})
 
         parsed = parse_reply(reply_text)
-        if parsed.sticker and parsed.sticker not in self.sticker_emojis and parsed.sticker not in [
-                m["emoji"] for m in await self.store.media(user_id, "sticker")]:
-            parsed.sticker = None
+        prev_reply = next((m.text for m in reversed(history) if m.role == "assistant"), "")
+        if parsed.parts and EMOJI.search(prev_reply.split("</react>")[-1]):
+            # эмодзи в конце два сообщения подряд — это уже привычка модели, а не её эмоция
+            parsed.parts[-1] = EMOJI.sub("", parsed.parts[-1]).rstrip() or parsed.parts[-1]
+        if parsed.sticker and (recent_media or (parsed.sticker not in self.sticker_emojis and parsed.sticker not in [
+                m["emoji"] for m in await self.store.media(user_id, "sticker")])):
+            parsed.sticker = None  # не чаще раза в ~12 её сообщений
+        if parsed.gif and recent_media:
+            parsed.gif = None
         if parsed.clip and parsed.clip.lower() not in [(c["title"] or "").lower()
                                                        for c in await self.store.media(user_id, "voice")]:
             parsed.clip = None  # выдуманное название — не отправляем
@@ -375,6 +386,8 @@ class CognitiveEngine:
             stored_reply = (stored_reply + "\n" if stored_reply else "") + f"<clip>{parsed.clip}</clip>"
         if parsed.sticker:
             stored_reply = (stored_reply + "\n" if stored_reply else "") + f"<sticker>{parsed.sticker}</sticker>"
+        if parsed.gif and self.gifs_available:
+            stored_reply = (stored_reply + "\n" if stored_reply else "") + f"<gif>{parsed.gif}</gif>"
         if parsed.silent:
             stored_reply = "<silence/>"
         if parsed.reaction:
