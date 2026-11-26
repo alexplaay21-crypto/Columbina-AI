@@ -328,14 +328,12 @@ class CognitiveEngine:
         emo_text, manners = self.emotions.describe(emo, sit.tags)
         her_recent = [m.text for m in history if m.role == "assistant"][-6:]
         inner_bits = await self.inner.context_bits(user_id) if self.inner else {}
-        for f in inner_bits.get("findings", [])[:1]:
-            await self.store.mark_knowledge(f["id"], mention=True)
         ctx = TurnContext(
             situation=sit, user=user, stage=rel.stage, stage_text=self.relationship.describe(rel),
             emotion_text=emo_text, emotion_manners=manners, recall=recall, summary=summary,
             appraisal=appr, abilities=active, perception_text=perception_text, open_threads=threads,
             pending_notes=notes, style_hints=self.style.overused(her_recent, user.preferred_name or user.display_name),
-            absence_days=absence_days, extra_observations=extra_obs, inner=inner_bits,
+            absence_days=absence_days, extra_observations=extra_obs, inner=inner_bits, query=user_text,
             lullaby=self.persona.lullaby_block() if self._wants_lullaby(appr.conditions, sit) else "",
         )
         inner = render_inner_context(ctx, self.s.context_budget_tokens)

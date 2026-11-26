@@ -233,7 +233,9 @@ async def test_reflection_updates_memory(engine, fake_llm, store):
     await engine.respond(1, 1, [Percept("text", True, "text", "", text="Как думаешь, Бублик испугается врача?", history="y")])
     ctx = last_inner_context(fake_llm)
     assert "Бублик" in ctx
-    assert "снежки" in ctx  # её собственная недавняя жизнь, чтобы не противоречить себе
+    assert "снежки" not in ctx  # её дела не лезут в разговор о другом
+    await engine.respond(1, 1, [Percept("text", True, "text", "", text="А ты чем занималась?", history="z")])
+    assert "снежки" in last_inner_context(fake_llm)  # спросили о её жизни — вспоминает, чтобы не противоречить себе
 
 
 @pytest.mark.asyncio

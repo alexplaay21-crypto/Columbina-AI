@@ -109,7 +109,10 @@ async def test_dream_only_at_night_and_rarely(engine, fake_llm, monkeypatch):
 async def test_findings_and_activity_reach_conversation(engine, fake_llm, monkeypatch):
     life = await _setup(engine, fake_llm, monkeypatch)
     await life.research(1)
-    await engine.respond(1, 1, [Percept("text", True, "text", "", text="Чем занималась?", history="x")])
+    await engine.respond(1, 1, [Percept("text", True, "text", "", text="Привет, у меня сегодня был экзамен", history="x")])
+    ctx = last_inner_context(fake_llm)
+    assert "Что ты действительно делала" not in ctx and "3,8 см" not in ctx  # не к месту — не вставляет
+    await engine.respond(1, 1, [Percept("text", True, "text", "", text="Что нового? Чем занималась?", history="x")])
     ctx = last_inner_context(fake_llm)
     assert "Что ты действительно делала" in ctx and "луна и космос" in ctx
     assert "3,8 см" in ctx and "example.org/moon" in ctx

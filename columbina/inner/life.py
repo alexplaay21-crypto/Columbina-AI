@@ -333,8 +333,8 @@ class InnerLife:
             "findings": findings[:2],
             "goals": [g["title"] for g in goals[:2]],
             "dream": fresh_dream,
-            "did": [f"изучала «{r['topic']}»" + (f": {r['summary'][:160]}" if r["summary"] else "")
-                    for r in recent_research[:2]],
+            "did": [f"читала про «{r['topic']}»" + (f": {r['summary'][:160]}" if r["summary"] else "")
+                    for r in recent_research[:2] if r["status"] in ("done", "open") and r["summary"]],
             "interests": [i["topic"] for i in (await self.store.interests(user_id))[:4]],
         }
 

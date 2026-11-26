@@ -13,12 +13,14 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 
 from ..abilities.engine import ActiveAbility
 from ..memory.retrieval import Recall
 from ..memory.store import StoredMessage, UserProfile
+from ..memory.embeddings import stems
 from .appraisal import Appraisal
 from .situation import Situation
 
@@ -42,6 +44,11 @@ IMPULSES = {
     "greeting_after_absence": "обрадоваться без упрёков; один раз спросить, всё ли хорошо; рассказать своё",
     "thanks": "принять благодарность просто, без «обращайся»",
 }
+
+ASKS_LIFE = re.compile(r"что (?:ты )?(?:делала|делаешь|нового)|чем (?:ты )?(?:занималась|занята|занимаешься)|"
+                       r"как (?:у тебя )?(?:дела|день|прош[её]л|поживаешь)|как ты\??$|что у тебя", re.I)
+ASKS_NEWS = re.compile(r"что нового|расскажи (?:что-нибудь|что-то|интересное)|что интересного|удиви", re.I)
+ASKS_DREAM = re.compile(r"\bсон\b|\bсни(?:лось|тся)\b|\bсны\b", re.I)
 
 LENGTH = {
     "short": "коротко: 1–2 фразы, как в быстрой переписке",
@@ -100,6 +107,7 @@ class TurnContext:
     initiative_reason: str | None = None
     lullaby: str = ""  # текст колыбельной — только когда она поёт
     inner: dict = field(default_factory=dict)  # находки, цели, сон, что она делала (InnerLife.context_bits)
+    query: str = ""  # текст собеседника: её дела и интересы всплывают, только если к нему относятся
 
 
 def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
@@ -133,8 +141,15 @@ def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
         eps = "\n".join(f"- ({_ago(e.created_at, now)}) {e.text}" for e, _ in ctx.recall.episodes)
         sections.append((3, "Всплыли воспоминания (используй, только если к месту; не перечисляй):\n" + eps))
 
-    if ctx.recall.her_life:
-        life = "\n".join(f"- ({_ago(e.created_at, now)}) {e.text}" for e in ctx.recall.her_life)
+    asks_life = bool(ASKS_LIFE.search(ctx.query or ""))
+    q_stems = set(stems(ctx.query or ""))
+
+    def related(text: str) -> bool:
+        return bool(q_stems & set(stems(text)))
+
+    her_life = [e for e in ctx.recall.her_life if asks_life or related(e.text)]
+    if her_life:
+        life = "\n".join(f"- ({_ago(e.created_at, now)}) {e.text}" for e in her_life)
         sections.append((5, "Что недавно было в твоей жизни (не противоречь этому):\n" + life))
 
     if ctx.recall.persona:
@@ -173,22 +188,29 @@ def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
         sections.append((2, "Тебе хочется: " + "; ".join(dict.fromkeys(impulses)) + ". Это импульс, не инструкция."))
 
     inner = ctx.inner or {}
-    if inner.get("did"):
+    # Её дела, находки, интересы — только если о них спросили или тема разговора рядом.
+    # Иначе модель вставляет их в любой ответ и начинает нести странное.
+    did = [d for d in inner.get("did", []) if asks_life or related(d)]
+    findings = [f for f in inner.get("findings", []) if related(f["text"] + " " + (f.get("topic") or ""))
+                or ASKS_NEWS.search(ctx.query or "")]
+    interests = [i for i in inner.get("interests", []) if related(i)]
+    goals = [g for g in inner.get("goals", []) if asks_life or related(g)]
+    if did:
         sections.append((4, "Что ты действительно делала в последние дни (только это можно называть своими делами): "
-                            + "; ".join(inner["did"]) + "."))
-    if inner.get("findings"):
-        f = inner["findings"][0]
+                            + "; ".join(did) + "."))
+    if findings:
+        f = findings[0]
         fact, _, hint = f["text"].partition(" || Как поделиться: ")
         sections.append((4, f"Твоя свежая находка (прочитала сама: {f.get('source_title') or ''} {f.get('source_url') or ''}): "
                             f"{fact}" + (f" Если к месту и тема рядом — можно поделиться, например: {hint}" if hint else "")
                             + " Не вставляй её насильно."))
-    if inner.get("dream"):
+    if inner.get("dream") and (asks_life or ASKS_DREAM.search(ctx.query or "") or related(inner["dream"])):
         sections.append((4, "Тебе недавно снился сон (это сон, не явь; рассказывай, только если к месту): "
                             + inner["dream"][:400]))
-    if inner.get("goals"):
-        sections.append((5, "Твои небольшие цели сейчас: " + "; ".join(inner["goals"]) + "."))
-    if inner.get("interests"):
-        sections.append((5, "Тебе сейчас интересно: " + ", ".join(inner["interests"]) + "."))
+    if goals:
+        sections.append((5, "Твои небольшие цели сейчас: " + "; ".join(goals) + "."))
+    if interests:
+        sections.append((5, "Тебе это правда интересно: " + ", ".join(interests) + "."))
 
     if ctx.open_threads:
         th = "; ".join(t["topic"] for t in ctx.open_threads[:3])
