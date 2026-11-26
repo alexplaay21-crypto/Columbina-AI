@@ -364,6 +364,8 @@ class CognitiveEngine:
             parsed.parts[-1] = EMOJI.sub("", parsed.parts[-1]).rstrip() or parsed.parts[-1]
         if parsed.parts:
             parsed.parts = self.style.de_interview(parsed.parts, prev_reply.split("</react>")[-1], user_text)
+            parsed.parts = self.style.de_lore(parsed.parts, [m.text for m in history if m.role == "assistant"][-3:],
+                                              user_text)
         if parsed.sticker and (recent_media or (parsed.sticker not in self.sticker_emojis and parsed.sticker not in [
                 m["emoji"] for m in await self.store.media(user_id, "sticker")])):
             parsed.sticker = None  # не чаще раза в ~12 её сообщений

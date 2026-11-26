@@ -48,6 +48,13 @@ SENT_SPLIT = re.compile(r"(?<=[.!?…])\s+(?=[А-ЯЁA-Z«\"(])")
 TO_USER = re.compile(r"(?<!\w)(?:ты|тебя|тебе|тобой|твой|твоя|твоё|твое|твои|вы|вас|вам)(?!\w)", re.I)
 
 
+# Её «лунная» тема и красивости: в обычной болтовне — не чаще раза в несколько ответов.
+LORE = re.compile(r"лун|куувах|куухен|хийси|hiisi|нод-кра|(?<!\w)дух|созвезд|звёзд|звезд|серебр|шеп(?:ч|от)|мерца|"
+                  r"ветер[оа]к|сиян|фатуи|предвестн|царица|luonnotar|луоннотар|сёстр|сестр[аыуе]", re.I)
+ABOUT_HER = re.compile(r"о себе|кто ты|где ты|откуда ты|твой (?:дом|зал)|как ты выглядишь|что (?:ты )?(?:делала|делаешь)|"
+                       r"чем (?:ты )?занимал|как (?:у тебя )?(?:дела|день)|расскажи (?:про|о) (?:тебя|себя|свою)", re.I)
+
+
 def parse_reply(text: str) -> ParsedReply:
     raw = text or ""
     reaction = None
@@ -166,6 +173,29 @@ class StyleGuard:
             if prev_q or (generic and rng.random() < 0.6):
                 out[-1] = " ".join(last[:-1])
         return [o.strip() for o in out if o.strip()] or parts
+
+    def de_lore(self, parts: list[str], recent_replies: list[str], user_text: str) -> list[str]:
+        """Убирает лишние «лунные» фразы и красивости, если собеседник не о том.
+
+        Если спросили о ней или тема и так про луну/духов — оставляем до двух таких фраз.
+        Иначе: одна фраза позволена, только если в трёх её прошлых ответах этого не было.
+        """
+        if LORE.search(user_text):
+            return parts
+        allowed = 2 if ABOUT_HER.search(user_text) else (0 if any(LORE.search(r) for r in recent_replies[-3:]) else 1)
+        used = 0
+        out: list[str] = []
+        for part in parts:
+            kept = []
+            for sent in SENT_SPLIT.split(part):
+                if LORE.search(sent):
+                    used += 1
+                    if used > allowed:
+                        continue
+                kept.append(sent)
+            out.append(" ".join(kept))
+        out = [o.strip() for o in out if o.strip()]
+        return out or parts
 
     def overused(self, recent_replies: list[str], user_name: str | None = None) -> list[str]:
         """Подсказки против повторов: какие характерные приметы уже приелись."""
