@@ -297,3 +297,24 @@ async def test_no_emoji_two_replies_in_a_row(engine, fake_llm):
     r1 = await engine.respond(1, 1, [Percept("text", True, "text", "", text="хай", history="хай")])
     r2 = await engine.respond(1, 1, [Percept("text", True, "text", "", text="как ты", history="как ты")])
     assert "👀" in r1.parts[0] and "👀" not in r2.parts[0]
+
+
+def test_condescension_is_blocked_but_normal_disagreement_is_not(persona):
+    g = StyleGuard(persona.style)
+    for bad in ["Тебе этого не понять, смертный.", "Ты всё равно не поймёшь.", "Как мило, что ты думаешь, будто знаешь.",
+                "Я старше тебя на века и знаю лучше.", "Людишки такие забавные."]:
+        assert "condescension" in g.check(bad).hard_violations, bad
+    for ok in ["Не соглашусь: по-моему, ты торопишься с выводом.", "Я этого не понимаю — объяснишь?",
+               "Мне кажется, тут ты ошибся, но я могу ошибаться тоже."]:
+        assert not g.check(ok).hard_violations, ok
+
+
+def test_core_prompt_says_equal_and_warm(persona):
+    assert "на равных" in persona.core_prompt and "свысока" in persona.core_prompt
+
+
+def test_foreign_script_and_snide_remarks(persona):
+    g = StyleGuard(persona.style)
+    assert "foreign_script" in g.check("Лучи падают прямее.也因此 день длиннее.").hard_violations
+    assert "condescension" in g.check("Логично, если не знать геометрию.").hard_violations
+    assert not g.check("Kuutar, Hiisi и Frostmoon Scions.").hard_violations
