@@ -74,6 +74,12 @@ COMMANDS: list[tuple[str, str, str, bool, bool, str]] = [
     ("name", "on_name", "Как тебя звать: /name Имя", False, False, "Управление"),
     ("city", "on_city", "Твой город: /city Город", False, False, "Управление"),
     ("tz", "on_tz", "Часовой пояс: /tz Europe/Moscow", False, False, "Управление"),
+    ("addvoice", "on_addvoice", "Сохранить голосовое: ответь на гс /addvoice название", False, False, "Голос и стикеры"),
+    ("voices", "on_voices", "Мои сохранённые голосовые", False, False, "Голос и стикеры"),
+    ("delvoice", "on_delvoice", "Удалить голосовое: /delvoice название", False, False, "Голос и стикеры"),
+    ("addpack", "on_addpack", "Выучить набор стикеров: ответь на стикер /addpack", False, False, "Голос и стикеры"),
+    ("stickers", "on_stickers", "Какие стикеры у меня есть", False, False, "Голос и стикеры"),
+    ("delpack", "on_delpack", "Забыть набор: /delpack имя", False, False, "Голос и стикеры"),
     ("backup", "on_backup", "Резервная копия твоих данных", False, False, "Данные"),
     ("export", "on_export", "Экспорт в текст", False, False, "Данные"),
     ("reset", "on_reset", "Сбросить текущий разговор", False, False, "Данные"),
@@ -230,6 +236,113 @@ class TelegramInterface:
 
     async def on_remember(self, m: Message, command: CommandObject) -> None:
         await self._reply_text(m, I.remember, command.args or "")
+
+    # ---------------- медиатека: голосовые и стикеры ----------------
+    def _owner(self, uid: int) -> int:
+        return 0 if uid in self.s.admin_user_ids else uid  # админ пополняет общую медиатеку
+
+    async def on_addvoice(self, m: Message, command: CommandObject) -> None:
+        if not await self._guard(m):
+            return
+        src = m if (m.voice or m.audio) else m.reply_to_message
+        title = (command.args or "").strip()[:80]
+        if not src or not (src.voice or src.audio):
+            await m.answer("Ответь на голосовое (или аудио) командой /addvoice название — например "
+                           "/addvoice колыбельная. Можно и подписью к самому голосовому.")
+            return
+        if not title:
+            await m.answer("Как его назвать? /addvoice название — по названию я его потом и пришлю.")
+            return
+        kind_file = src.voice.file_id if src.voice else src.audio.file_id
+        await self.engine.store.add_media(self._owner(m.from_user.id), "voice", kind_file, title=title,
+                                          set_name="audio" if src.audio else None)
+        await m.answer(f"Сохранила «{title}». Попросишь — пришлю.")
+
+    async def on_voices(self, m: Message) -> None:
+        if not await self._guard(m):
+            return
+        items = await self.engine.store.media(m.from_user.id, "voice")
+        if not items:
+            await m.answer("Сохранённых голосовых нет. Ответь на голосовое командой /addvoice название.")
+            return
+        await m.answer("Мои голосовые:\n" + "\n".join(f"— {i['title']}" + (" (общее)" if i["owner_id"] == 0 else "")
+                                                       for i in items) + "\n\nПопроси: «скинь гс …» или «спой».")
+
+    async def on_delvoice(self, m: Message, command: CommandObject) -> None:
+        if await self._guard(m):
+            n = await self.engine.store.delete_media(m.from_user.id, "voice", (command.args or "").strip(),
+                                                     admin=m.from_user.id in self.s.admin_user_ids)
+            await m.answer("Удалила." if n else "Такого голосового нет. Список: /voices")
+
+    async def on_addpack(self, m: Message, command: CommandObject) -> None:
+        if not await self._guard(m):
+            return
+        st = m.reply_to_message.sticker if m.reply_to_message and m.reply_to_message.sticker else None
+        name = (command.args or "").strip() or (st.set_name if st else "")
+        if not name:
+            await m.answer("Пришли мне любой стикер из набора и ответь на него /addpack — я выучу весь набор. "
+                           "Или /addpack имя_набора (из ссылки t.me/addstickers/ИМЯ).")
+            return
+        n = await self.learn_pack(self._owner(m.from_user.id), name)
+        await m.answer(f"Выучила набор «{name}»: {n} стикеров. Буду иногда ими отвечать." if n else
+                       "Не нашла такой набор.")
+
+    async def learn_pack(self, owner: int, set_name: str) -> int:
+        try:
+            sset = await self.bot.get_sticker_set(set_name)
+        except Exception:
+            log.info("sticker set %s not found", set_name, exc_info=True)
+            return 0
+        for stk in sset.stickers:
+            await self.engine.store.add_media(owner, "sticker", stk.file_id, (stk.emoji or "").replace("\ufe0f", ""),
+                                              set_name=set_name)
+        return len(sset.stickers)
+
+    async def on_stickers(self, m: Message) -> None:
+        if not await self._guard(m):
+            return
+        items = await self.engine.store.media(m.from_user.id, "sticker")
+        sets: dict[str, int] = {}
+        for i in items:
+            sets[i["set_name"] or "по одному"] = sets.get(i["set_name"] or "по одному", 0) + 1
+        sets.update({f"{self.s.sticker_set} (из настроек)": len(self.stickers)} if self.stickers else {})
+        if not sets:
+            await m.answer("Стикеров у меня пока нет. Пришли мне стикер — я его запомню. Ответь на стикер /addpack — "
+                           "выучу весь набор. Свой набор можно сделать в @Stickers.")
+            return
+        emojis = " ".join(dict.fromkeys(i["emoji"] for i in items if i["emoji"]))
+        await m.answer("Мои стикеры:\n" + "\n".join(f"— {k}: {v}" for k, v in sets.items()) +
+                       (f"\n\nЭмоции: {emojis[:300]}" if emojis else ""))
+
+    async def on_delpack(self, m: Message, command: CommandObject) -> None:
+        if await self._guard(m):
+            n = await self.engine.store.delete_media(m.from_user.id, "sticker", (command.args or "").strip(),
+                                                     admin=m.from_user.id in self.s.admin_user_ids)
+            await m.answer(f"Забыла {n} стикеров." if n else "Такого набора нет. Список: /stickers")
+
+    async def _send_sticker(self, chat_id: int, uid: int, emoji: str) -> None:
+        items = [i for i in await self.engine.store.media(uid, "sticker") if i["emoji"] == emoji]
+        if items:
+            pick = min(items, key=lambda i: i["uses"])  # не один и тот же стикер подряд
+            await self.engine.store.media_used(pick["id"])
+            await self.bot.send_sticker(chat_id, pick["file_id"])
+        elif emoji in self.stickers:
+            await self.bot.send_sticker(chat_id, self.stickers[emoji])
+
+    async def _send_clip(self, chat_id: int, uid: int, title: str, reply_to: int | None) -> bool:
+        from aiogram.types import ReplyParameters
+
+        items = [i for i in await self.engine.store.media(uid, "voice") if (i["title"] or "").lower() == title.lower()]
+        if not items:
+            return False
+        kw = {"reply_parameters": ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)} if reply_to else {}
+        clip = items[0]
+        await self.engine.store.media_used(clip["id"])
+        if clip["set_name"] == "audio":
+            await self.bot.send_audio(chat_id, clip["file_id"], **kw)
+        else:
+            await self.bot.send_voice(chat_id, clip["file_id"], **kw)
+        return True
 
     async def on_wake(self, m: Message) -> None:
         if await self._guard(m):
@@ -523,9 +636,14 @@ class TelegramInterface:
                     await self.bot.send_animation(chat_id, url)
                 except Exception:
                     log.debug("gif failed", exc_info=True)
-        if reply.sticker and reply.sticker in self.stickers:
+        if reply.clip:
             try:
-                await self.bot.send_sticker(chat_id, self.stickers[reply.sticker])
+                await self._send_clip(chat_id, uid, reply.clip, None)
+            except Exception:
+                log.debug("clip failed", exc_info=True)
+        if reply.sticker:
+            try:
+                await self._send_sticker(chat_id, uid, reply.sticker)
             except Exception:
                 log.debug("sticker failed", exc_info=True)
         if reply.sources:
@@ -658,6 +776,10 @@ class TelegramInterface:
                                                d.mime_type, caption))
             elif m.sticker:
                 emoji = m.sticker.emoji or ""
+                if (await self.engine.store.get_setting(m.from_user.id, "learn_stickers", "on")) != "off":
+                    # «скопировать»: запоминает стикеры, которые ей присылают, и может ответить ими же
+                    await self.engine.store.add_media(m.from_user.id, "sticker", m.sticker.file_id,
+                                                      emoji.replace("\ufe0f", ""), set_name=m.sticker.set_name)
                 out.append(Percept("sticker", True, "metadata", f"стикер {emoji}".strip(),
                                    text=f"[стикер {emoji}]".strip(), history=f"[стикер {emoji}]"))
             elif m.text:

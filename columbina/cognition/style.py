@@ -16,6 +16,7 @@ VOICE_RE = re.compile(r"<voice\s*/?>", re.I)
 STICKER_RE = re.compile(r"<sticker>\s*([^<]{1,8})\s*</sticker>", re.I)
 SILENCE_RE = re.compile(r"<silence\s*/?>", re.I)
 GIF_RE = re.compile(r"<gif>\s*([^<]{2,60})\s*</gif>", re.I)
+CLIP_RE = re.compile(r"<clip>\s*([^<]{1,80})\s*</clip>", re.I)
 ASSISTANTISH = re.compile(r"отличный вопрос|рада помочь|вот несколько|надеюсь,? это поможет|если хочешь,? (?:я )?могу|"
                           r"не стесняйся|в заключение|подытожим|во-первых.*во-вторых|я здесь, чтобы", re.I | re.S)
 
@@ -29,6 +30,7 @@ class ParsedReply:
     sticker: str | None = None  # эмодзи стикера из её набора (<sticker>🌙</sticker>)
     silent: bool = False  # решила промолчать (<silence/>)
     gif: str | None = None  # запрос для GIF (<gif>снег падает</gif>)
+    clip: str | None = None  # сохранённое голосовое по названию (<clip>колыбельная</clip>)
 
 
 @dataclass
@@ -47,6 +49,9 @@ def parse_reply(text: str) -> ParsedReply:
     silent = bool(SILENCE_RE.search(raw))
     gm = GIF_RE.search(raw)
     gif = gm.group(1).strip() if gm else None
+    cm = CLIP_RE.search(raw)
+    clip = cm.group(1).strip() if cm else None
+    raw = CLIP_RE.sub("", raw)
     raw = GIF_RE.sub("", SILENCE_RE.sub("", STICKER_RE.sub("", VOICE_RE.sub("", raw))))
     m = REACT_RE.search(raw) or TEXT_REACT_RE.search(raw)
     if m:
@@ -62,7 +67,7 @@ def parse_reply(text: str) -> ParsedReply:
     if len(parts) > 3:
         parts = parts[:2] + ["\n\n".join(parts[2:])]
     return ParsedReply(parts=parts, reaction=reaction, raw=text, voice=voice, sticker=sticker,
-                       silent=silent and not parts and not gif, gif=gif)
+                       silent=silent and not parts and not gif and not clip, gif=gif, clip=clip)
 
 
 class StyleGuard:

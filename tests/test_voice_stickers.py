@@ -161,3 +161,53 @@ async def test_video_note_from_avatar_and_voice(tmp_path):
     voice = await tts.synthesize("Привет.")
     mp4 = await video_note(avatar, voice, tmp_path)
     assert mp4 and b"ftyp" in mp4[:32]
+
+
+async def test_saved_voice_clip_sent_on_request(engine, fake_llm, store):
+    from .conftest import last_inner_context
+
+    await store.add_media(0, "voice", "VOICE_FILE", title="колыбельная")
+    fake_llm.script = lambda r: "<clip>колыбельная</clip>" if r.tier == "main" else "{}"
+    r = await engine.respond(1, 1, t("скинь гс, пожалуйста"))
+    ctx = last_inner_context(fake_llm)
+    assert "собеседник просит голосовое" in ctx and "«колыбельная»" in ctx
+    assert r.clip == "колыбельная" and not r.parts  # только голосовое, без «…»
+    assert (await store.active_messages(1))[-1].text == "<clip>колыбельная</clip>"
+    fake_llm.script = lambda r: "<clip>выдумка</clip>Держи." if r.tier == "main" else "{}"
+    assert (await engine.respond(1, 1, t("ещё гс"))).clip is None  # несуществующее не отправляет
+
+
+async def test_addvoice_learned_stickers_and_sending(tg):  # noqa: F811
+    import asyncio
+
+    from aiogram.methods import SendVoice as SV
+    from aiogram.types import Chat, Message, Sticker, Update, User, Voice
+
+    def upd(i, **kw):
+        return Update(update_id=i, message=Message(message_id=i, date=dt.datetime.now(), chat=Chat(id=1, type="private"),
+                      from_user=User(id=5, is_bot=False, first_name="Б"), **kw))
+
+    tg.s = dataclasses.replace(tg.s, debounce_seconds=0, admin_user_ids=frozenset())
+    voice = Message(message_id=1, date=dt.datetime.now(), chat=Chat(id=1, type="private"),
+                    voice=Voice(file_id="MY_VOICE", file_unique_id="u", duration=3))
+    await tg.dp.feed_update(tg.bot, upd(2, text="/addvoice привет", reply_to_message=voice))
+    clips = await tg.engine.store.media(5, "voice")
+    assert clips and clips[0]["title"] == "привет" and clips[0]["owner_id"] == 5
+    # стикер, присланный собеседником, она запоминает
+    stk = Sticker(file_id="STK1", file_unique_id="s1", type="regular", width=512, height=512, is_animated=False,
+                  is_video=False, emoji="😼", set_name="CatsPack")
+    await tg.dp.feed_update(tg.bot, upd(3, sticker=stk))
+    for _ in range(40):
+        if await tg.engine.store.media(5, "sticker"):
+            break
+        await asyncio.sleep(0.05)
+    assert (await tg.engine.store.media(5, "sticker"))[0]["emoji"] == "😼"
+    # и отвечает сохранённым голосовым
+    tg.engine.llm.script = lambda r: "<clip>привет</clip>" if r.tier == "main" else "{}"
+    await tg.dp.feed_update(tg.bot, upd(4, text="кинь гс"))
+    for _ in range(40):
+        if any(isinstance(c, SV) for c in tg.bot.session.calls):
+            break
+        await asyncio.sleep(0.05)
+    sent = [c for c in tg.bot.session.calls if isinstance(c, SV)]
+    assert sent and sent[0].voice == "MY_VOICE"

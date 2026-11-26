@@ -219,6 +219,18 @@ CREATE TABLE IF NOT EXISTS user_settings (
     value TEXT NOT NULL,
     PRIMARY KEY (user_id, key)
 );
+CREATE TABLE IF NOT EXISTS media_library (
+    id {PK},
+    owner_id {BIGINT} NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL,
+    file_id TEXT NOT NULL,
+    emoji TEXT,
+    title TEXT,
+    set_name TEXT,
+    uses INTEGER NOT NULL DEFAULT 0,
+    created_at {REAL} NOT NULL,
+    UNIQUE(owner_id, kind, file_id)
+);
 CREATE TABLE IF NOT EXISTS persona_embeddings (
     chunk_id TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
@@ -233,7 +245,7 @@ TYPES = {
 
 ALL_TABLES = ["users", "messages", "summaries", "episodes", "facts", "relationship", "emotion_state", "events",
               "threads", "notes", "initiatives", "usage", "web_log", "interests", "knowledge", "diary", "goals",
-              "research", "user_settings", "persona_embeddings"]
+              "research", "user_settings", "media_library", "persona_embeddings"]
 
 
 def schema_for(dialect: str) -> str:
@@ -776,6 +788,31 @@ class MemoryStore:
         return await self.d.fetchall("SELECT * FROM research WHERE user_id=? AND updated_at>=? ORDER BY id DESC",
                                      (user_id, float(since)))
 
+    # ---------- её медиатека: сохранённые голосовые и стикеры ----------
+    async def add_media(self, owner_id: int, kind: str, file_id: str, emoji: str | None = None,
+                        title: str | None = None, set_name: str | None = None) -> None:
+        await self.d.execute(
+            "INSERT INTO media_library(owner_id, kind, file_id, emoji, title, set_name, created_at) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT(owner_id, kind, file_id) DO UPDATE SET "
+            "emoji=COALESCE(excluded.emoji, media_library.emoji), title=COALESCE(excluded.title, media_library.title)",
+            (owner_id, kind, file_id, emoji, (title or "")[:80] or None, set_name, time.time()))
+
+    async def media(self, user_id: int, kind: str) -> list[dict[str, Any]]:
+        """Общая медиатека (owner 0, добавляет админ) + личная этого собеседника."""
+        return await self.d.fetchall(
+            "SELECT * FROM media_library WHERE kind=? AND owner_id IN (0, ?) ORDER BY id", (kind, user_id))
+
+    async def media_used(self, media_id: int) -> None:
+        await self.d.execute("UPDATE media_library SET uses=uses+1 WHERE id=?", (media_id,))
+
+    async def delete_media(self, user_id: int, kind: str, title_or_set: str, admin: bool = False) -> int:
+        owners = (0, user_id) if admin else (user_id,)
+        rows = [r for r in await self.media(user_id, kind) if r["owner_id"] in owners and
+                title_or_set.lower() in {(r["title"] or "").lower(), (r["set_name"] or "").lower()}]
+        for r in rows:
+            await self.d.execute("DELETE FROM media_library WHERE id=?", (r["id"],))
+        return len(rows)
+
     # ---------- persona embeddings cache ----------
     async def get_persona_embedding(self, chunk_id: str, content_hash: str) -> np.ndarray | None:
         r = await self.d.fetchone(
@@ -811,3 +848,4 @@ class MemoryStore:
                       "events", "threads", "notes", "initiatives", "web_log", "interests", "knowledge", "diary",
                       "goals", "research", "user_settings"):
             await self.d.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+        await self.d.execute("DELETE FROM media_library WHERE owner_id=?", (user_id,))

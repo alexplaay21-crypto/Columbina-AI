@@ -87,6 +87,7 @@ class Reply:
     silent: bool = False  # решила промолчать
     singing: bool = False  # поёт колыбельную (для голосового — напевно)
     gif: str | None = None  # запрос GIF, если она решила ответить гифкой
+    clip: str | None = None  # название сохранённого голосового
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -284,6 +285,12 @@ class CognitiveEngine:
                 extra_obs.append("похоже, собеседник сменил тему — иди за ним, к прежней вернёшься, если он захочет")
         if any(p.kind == "reply" for p in percepts):
             extra_obs.append("собеседник отвечает на конкретное сообщение — отвечай прежде всего на него")
+        clips = [c["title"] for c in await self.store.media(user_id, "voice") if c["title"]]
+        if clips:
+            asked = "voice_request" in appr.conditions or "sing_request" in appr.conditions
+            extra_obs.append(("собеседник просит голосовое — " if asked else "") +
+                             "у тебя есть сохранённые голосовые: " + ", ".join(f"«{c}»" for c in clips[:15]) +
+                             "; прислать одно — <clip>название</clip>" + ("" if asked else " (только если просят или к месту)"))
         voice_mode = await self.store.get_setting(user_id, "voice", "mirror")
         if self.voice_available and voice_mode != "off":
             heard = any(p.kind in ("voice", "video_note") for p in percepts)
@@ -292,8 +299,10 @@ class CognitiveEngine:
                 " (например, тихо на ночь или спеть колыбельную), но не часто"))
         if self.gifs_available:
             extra_obs.append("можешь изредка ответить гифкой: <gif>короткий запрос по-английски</gif>")
-        if self.sticker_emojis:
-            extra_obs.append("у тебя есть стикеры (" + " ".join(self.sticker_emojis[:20]) +
+        own = [m["emoji"] for m in await self.store.media(user_id, "sticker") if m["emoji"]]
+        emojis = list(dict.fromkeys(self.sticker_emojis + own))
+        if emojis:
+            extra_obs.append("у тебя есть стикеры (" + " ".join(emojis[:24]) +
                              ") — изредка можешь добавить один: <sticker>эмодзи</sticker>")
 
         # --- память ---
@@ -345,12 +354,16 @@ class CognitiveEngine:
             return Reply(parts=[random.choice(PALE_REPLIES)], debug={"error": str(e)})
 
         parsed = parse_reply(reply_text)
-        if not parsed.parts and not parsed.reaction and not parsed.silent:
-            parsed = ParsedReply(parts=["…"], reaction=None, raw=reply_text)
+        if parsed.sticker and parsed.sticker not in self.sticker_emojis and parsed.sticker not in [
+                m["emoji"] for m in await self.store.media(user_id, "sticker")]:
+            parsed.sticker = None
+        if parsed.clip and parsed.clip.lower() not in [(c["title"] or "").lower()
+                                                       for c in await self.store.media(user_id, "voice")]:
+            parsed.clip = None  # выдуманное название — не отправляем
         if parsed.silent and "?" in user_text:
             parsed.silent, parsed.reaction = False, parsed.reaction or "🤔"  # на вопрос не молчит
-        if parsed.sticker and parsed.sticker not in self.sticker_emojis:
-            parsed.sticker = None
+        if not parsed.parts and not parsed.reaction and not parsed.silent and not parsed.clip and not parsed.sticker:
+            parsed = ParsedReply(parts=["…"], reaction=None, raw=reply_text)
         if not parsed.reaction and not parsed.silent:
             parsed.reaction = await self._event_reaction(user_id, appr.emotion_events)
 
@@ -358,6 +371,10 @@ class CognitiveEngine:
         user_msg_id = await self.store.add_message(user_id, "user", history_text, at=ts)
         # Реакция хранится в нашем же формате <react>, чтобы модель не училась писать «реакция» текстом.
         stored_reply = "\n\n---\n\n".join(parsed.parts)
+        if parsed.clip:
+            stored_reply = (stored_reply + "\n" if stored_reply else "") + f"<clip>{parsed.clip}</clip>"
+        if parsed.sticker:
+            stored_reply = (stored_reply + "\n" if stored_reply else "") + f"<sticker>{parsed.sticker}</sticker>"
         if parsed.silent:
             stored_reply = "<silence/>"
         if parsed.reaction:
@@ -382,7 +399,7 @@ class CognitiveEngine:
                      quote=any(p.kind == "reply" for p in percepts),
                      sources=sources_message(budget, reply_text) if budget else None,
                      voice=parsed.voice, sticker=parsed.sticker, silent=parsed.silent and not parsed.reaction,
-                     singing=bool(ctx.lullaby), gif=parsed.gif if self.gifs_available else None,
+                     singing=bool(ctx.lullaby), gif=parsed.gif if self.gifs_available else None, clip=parsed.clip,
                      debug={"inner_context": inner, "tool_notes": tool_notes, "stage": rel.stage, "emotion": emo_text})
 
     EVENT_REACTIONS = {

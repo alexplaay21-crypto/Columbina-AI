@@ -82,6 +82,7 @@ ACTIONS = {
     "activity_log": (I.activity_text, "inner", False),
     "about": (lambda e, u: _const(I.ABOUT), "persona", False),
     "profile": (I.profile_text, "persona", False),
+    "media": (I.media_text, "persona", False),
     "status": (lambda e, u: I.status_text(e, u, False), "system", False),
     "status_admin": (lambda e, u: I.status_text(e, u, True), "system", True),
     "check": (lambda e, u: I.health_check(e), "system", True),
@@ -134,7 +135,7 @@ class MenuController:
             user = await st.get_user(user_id)
             reg = "на «вы»" if user and user.register == "vy" else "на «ты»"
             rows = [[("О Коломбине", "a:about"), ("Твой профиль", "a:profile")],
-                    [(f"Обращение: {reg} ⇄", "t:register")], back()]
+                    [(f"Обращение: {reg} ⇄", "t:register"), ("Голосовые и стикеры", "a:media")], back()]
             return Screen(TITLES["persona"] + "\nКак тебя звать: /name Имя. Город: /city Город.", _kb(rows))
         if name == "activity":
             user = await st.get_user(user_id)

@@ -437,7 +437,8 @@ async def backup_json(engine, user_id: int) -> bytes:
     for table in ALL_TABLES:
         if table == "persona_embeddings":
             continue
-        rows = await engine.store.d.fetchall(f"SELECT * FROM {table} WHERE user_id=?", (user_id,))
+        col = "owner_id" if table == "media_library" else "user_id"
+        rows = await engine.store.d.fetchall(f"SELECT * FROM {table} WHERE {col}=?", (user_id,))
         for r in rows:
             r.pop("embedding", None)
         out[table] = rows
@@ -457,3 +458,17 @@ async def reset_context(engine, user_id: int) -> str:
     if msgs:
         await engine.store.archive_messages_upto(user_id, msgs[-1].id)
     return "Начнём разговор заново. Что было — я помню, но эту тему отпускаю."
+
+
+async def media_text(engine, user_id: int) -> str:
+    voices = await engine.store.media(user_id, "voice")
+    stickers = await engine.store.media(user_id, "sticker")
+    sets = sorted({s["set_name"] for s in stickers if s["set_name"]})
+    out = ["Голосовые: " + (", ".join(f"«{v['title']}»" for v in voices) if voices else "пока нет"),
+           f"Стикеров: {len(stickers)}" + (f" (наборы: {', '.join(sets)})" if sets else "")]
+    out += ["", "Как добавить:",
+            "— голосовое: ответь на гс командой /addvoice название, и попроси потом «скинь гс название»;",
+            "— стикеры: просто присылай мне стикеры — я запоминаю их и иногда отвечаю ими же;",
+            "— целый набор: ответь на любой стикер из набора /addpack;",
+            "— свой набор можно сделать в @Stickers."]
+    return "\n".join(out)
