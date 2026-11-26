@@ -40,7 +40,6 @@ class Candidate:
     reason: str
     score: float
     ref_id: int | None = None
-    bypass_unanswered: bool = False
 
 
 def in_quiet_hours(user: UserProfile, now: datetime, default_tz: str) -> bool:
@@ -72,7 +71,7 @@ class InitiativeEngine:
         for n in await self.store.pending_notes(user.user_id):
             if n["due_at"] <= ts:
                 out.append(Candidate("note", f"пришло время твоей записки: «{n['text']}». Напомни естественно, своими словами",
-                                     10.0, n["id"], bypass_unanswered=True))
+                                     10.0, n["id"]))
         if rel.stage >= 2:
             for t in await self.store.open_threads(user.user_id):
                 if t["follow_up_at"] and t["follow_up_at"] <= ts and ts - t["follow_up_at"] < 3 * 86400:

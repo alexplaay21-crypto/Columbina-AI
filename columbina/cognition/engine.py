@@ -160,10 +160,15 @@ class CognitiveEngine:
         return self.emotions.decay(EmotionState(vals, mood, cause, at), now, sit.tags)
 
     async def over_budget(self, user_id: int) -> bool:
-        if self.s.daily_budget_usd <= 0:
-            return False
+        """Контроль расходов: деньги на собеседника, деньги всего бота, число запросов в сутки."""
         start = time.time() - 86400
-        return await self.store.cost_since(user_id, start) >= self.s.daily_budget_usd
+        if self.s.daily_budget_usd > 0 and await self.store.cost_since(user_id, start) >= self.s.daily_budget_usd:
+            return True
+        if self.s.daily_budget_total > 0 and await self.store.cost_since(None, start) >= self.s.daily_budget_total:
+            return True
+        if self.s.daily_calls_per_user > 0 and await self.store.calls_since(user_id, start) >= self.s.daily_calls_per_user:
+            return True
+        return False
 
     def conditions(self, sit: Situation, percepts: list[Percept], emo: EmotionState, appr_conditions: set[str]) -> set[str]:
         c = set(appr_conditions)
@@ -263,6 +268,12 @@ class CognitiveEngine:
         if not user.timezone and not user.city:
             extra_obs.append("ты не знаешь, где собеседник и сколько у него времени (время выше — по Москве); "
                              "если к месту, можешь спросить город")
+        prev = [m.text for m in history[-2:]] if (history := await self.store.active_messages(user_id)) else []
+        if prev and len(user_text) > 30 and not appr.emotion_events:
+            from ..memory.embeddings import stems
+
+            if not set(stems(user_text)) & set(stems(" ".join(prev))):
+                extra_obs.append("похоже, собеседник сменил тему — иди за ним, к прежней вернёшься, если он захочет")
         if any(p.kind == "reply" for p in percepts):
             extra_obs.append("собеседник отвечает на конкретное сообщение — отвечай прежде всего на него")
 
@@ -283,7 +294,7 @@ class CognitiveEngine:
 
         emo_text, manners = self.emotions.describe(emo, sit.tags)
         her_recent = [m.text for m in history if m.role == "assistant"][-6:]
-        inner_bits = await self.inner.context_bits(user_id, None) if self.inner else {}
+        inner_bits = await self.inner.context_bits(user_id) if self.inner else {}
         for f in inner_bits.get("findings", [])[:1]:
             await self.store.mark_knowledge(f["id"], mention=True)
         ctx = TurnContext(
@@ -530,14 +541,27 @@ class CognitiveEngine:
                 if f.get("certain") is False:  # догадка, а не сказанное прямо
                     conf = min(conf, 0.45)
                 pinned = f["key"].strip().lower() in {"имя", "как называть"}
+                old = await self.store.fact_value(user_id, f["key"])
+                if old and old.strip().lower() != f["value"].strip().lower():
+                    # противоречие: новое сказанное заменяет старое, но след остаётся в журнале
+                    await self.store.log_event(user_id, "fact_changed", "reflection", f"{f['key']}: {old} → {f['value']}")
+                    if conf < 0.5:
+                        continue  # догадка не перетирает сказанное прямо
                 await self.store.upsert_fact(user_id, f["key"], f["value"], conf, v, pinned=pinned)
 
-        # Эпизод
+        # Эпизод — без дублей: похожее воспоминание усиливается, а не копируется
         if result.episode:
             ep = result.episode
             vec = (await self.embedder.embed([ep["text"]]))[0]
-            await self.store.add_episode(user_id, ep["text"], max(1, min(5, int(ep.get("importance", 2)))),
-                                         ep.get("emotion") or None, "shared", vec, at=ts)
+            importance = max(1, min(5, int(ep.get("importance", 2))))
+            recent = [e for e in (await self.store.episodes(user_id, "shared"))[-60:] if e.embedding is not None]
+            dup = next((e for e in recent if e.embedding.shape == vec.shape and float((e.embedding * vec).sum()) > 0.92),
+                       None)
+            if dup:
+                await self.store.merge_episode(dup.id, importance, ep["text"] if len(ep["text"]) > len(dup.text) else None)
+            else:
+                await self.store.add_episode(user_id, ep["text"], importance, ep.get("emotion") or None, "shared", vec,
+                                             at=ts)
 
         if result.her_life:
             vec = (await self.embedder.embed([result.her_life]))[0]

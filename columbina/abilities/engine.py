@@ -29,7 +29,6 @@ class ActiveAbility:
 class AbilitiesEngine:
     def __init__(self, abilities_cfg: dict[str, Any]):
         self.abilities: list[dict[str, Any]] = abilities_cfg.get("abilities", [])
-        self.traits: dict[str, Any] = abilities_cfg.get("traits", {})
         self.by_id = {a["id"]: a for a in self.abilities}
 
     def _conditions_met(self, conds: list[str], ctx: AbilityContext) -> int:

@@ -109,19 +109,6 @@ class OpenAICompatibleEmbedder:
         return out
 
 
-class FallbackEmbedder:
-    """Пробует основной эмбеддер, при ошибке сети — локальный (с тем же размером недоступно,
-    поэтому локальный используется только если основного вектора ещё нет в базе)."""
-
-    def __init__(self, primary: Embedder, fallback: Embedder):
-        self.primary, self.fallback = primary, fallback
-        self.dim = primary.dim
-
-    async def embed(self, texts: list[str], kind: str = "document") -> list[np.ndarray]:
-        try:
-            return await self.primary.embed(texts, kind)
-        except Exception:
-            return await self.fallback.embed(texts, kind)
 
 
 def cosine(a: np.ndarray | None, b: np.ndarray | None) -> float:

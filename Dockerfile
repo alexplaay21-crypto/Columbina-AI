@@ -29,4 +29,7 @@ RUN useradd --create-home --uid 1000 columbina \
 USER columbina
 
 ENV MEDIA_TMP_DIR=/app/var/tmp
+# Жив ли планировщик (обновляет /app/var/heartbeat каждые INITIATIVE_TICK_SECONDS)
+HEALTHCHECK --interval=5m --timeout=10s --start-period=5m --retries=3 \
+  CMD python -c "import os,sys,time;p='/app/var/heartbeat';sys.exit(0 if os.path.exists(p) and time.time()-float(open(p).read())<1800 else 1)"
 CMD ["python", "-m", "columbina.main"]

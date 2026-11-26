@@ -199,11 +199,19 @@ async def status_text(engine, user_id: int, admin: bool = False) -> str:
         "Интернет: могу поискать, если нужно." if engine.web else "Интернет: выключен.",
     ]
     if admin:
-        llm = engine.llm
-        model = getattr(llm, "main_model", None) or getattr(getattr(llm, "main", None), "main_model", "?")
-        lines.append(f"\n⚙️ модель: {model}; база: {st.d.dialect}; "
-                     f"вне зрения: {'да' if engine.vision and not engine.vision.main_vision else 'нет'}")
+        blind = engine.vision is not None and not engine.vision.main_vision
+        lines.append(f"\n⚙️ модель: {_model_name(engine.llm)}; база: {st.d.dialect}; "
+                     f"картинки: {'через описание' + ('' if engine.vision.describer else ' (не настроено)') if blind else 'видит сама'}; "
+                     f"интернет: {'вкл' if engine.web else 'выкл'}")
     return "\n".join(lines)
+
+
+def _model_name(llm) -> str:
+    for attr in ("main_model",):
+        if hasattr(llm, attr):
+            return getattr(llm, attr)
+    inner = getattr(llm, "main", None) or (getattr(llm, "providers", None) or [None])[0]
+    return _model_name(inner) if inner is not None and inner is not llm else type(llm).__name__
 
 
 async def profile_text(engine, user_id: int) -> str:

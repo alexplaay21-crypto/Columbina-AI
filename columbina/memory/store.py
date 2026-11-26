@@ -446,6 +446,19 @@ class MemoryStore:
         assert table in ("episodes", "facts")
         await self.d.execute(f"UPDATE {table} SET embedding=? WHERE id=?", (to_blob(vec), row_id))
 
+    async def merge_episode(self, episode_id: int, importance: int, text: str | None = None) -> None:
+        """Похожее воспоминание не дублируется: усиливаем существующее (и уточняем текст, если новый полнее)."""
+        await self.d.execute(
+            "UPDATE episodes SET importance=CASE WHEN importance > ? THEN importance ELSE ? END, "
+            "recall_count=recall_count+1, last_recalled_at=? WHERE id=?",
+            (int(importance), int(importance), time.time(), episode_id))
+        if text:
+            await self.d.execute("UPDATE episodes SET text=? WHERE id=?", (text, episode_id))
+
+    async def delete_episodes(self, ids: list[int]) -> None:
+        for i in ids:
+            await self.d.execute("DELETE FROM episodes WHERE id=?", (i,))
+
     async def mark_recalled(self, episode_ids: list[int]) -> None:
         if not episode_ids:
             return
@@ -471,6 +484,10 @@ class MemoryStore:
             (user_id, key.strip().lower()[:80], value.strip()[:400], float(confidence), int(pinned), now, now,
              to_blob(embedding)),
         )
+
+    async def fact_value(self, user_id: int, key: str) -> str | None:
+        r = await self.d.fetchone("SELECT value FROM facts WHERE user_id=? AND key=?", (user_id, key.strip().lower()[:80]))
+        return r["value"] if r else None
 
     async def delete_fact(self, user_id: int, key: str) -> None:
         await self.d.execute("DELETE FROM facts WHERE user_id=? AND key=?", (user_id, key.strip().lower()))
@@ -549,11 +566,6 @@ class MemoryStore:
             (user_id, text[:500], float(due_at), time.time()),
         )
 
-    async def due_notes(self, now: float) -> list[dict[str, Any]]:
-        return await self.d.fetchall(
-            "SELECT * FROM notes WHERE status='pending' AND due_at<=? ORDER BY due_at", (float(now),)
-        )
-
     async def pending_notes(self, user_id: int) -> list[dict[str, Any]]:
         return await self.d.fetchall(
             "SELECT * FROM notes WHERE user_id=? AND status='pending' ORDER BY due_at", (user_id,)
@@ -597,6 +609,24 @@ class MemoryStore:
                 "SELECT COALESCE(SUM(cost_usd),0) AS c FROM usage WHERE user_id=? AND created_at>=?", (user_id, float(since))
             )
         return float(r["c"])
+
+    async def calls_since(self, user_id: int | None, since: float, purposes: tuple[str, ...] | None = None) -> int:
+        q, args = "SELECT COUNT(*) AS n FROM usage WHERE created_at>=?", [float(since)]
+        if user_id is not None:
+            q += " AND user_id=?"
+            args.append(user_id)
+        if purposes:
+            q += " AND purpose IN (" + ",".join("?" for _ in purposes) + ")"
+            args.extend(purposes)
+        r = await self.d.fetchone(q, args)
+        return int(r["n"])
+
+    async def prune(self, table: str, column: str, before: float, extra: str = "", args: tuple = ()) -> int:
+        """Удалить старые служебные записи (журналы), чтобы база не росла бесконечно."""
+        assert table in {"web_log", "usage", "events", "episodes", "knowledge", "messages"}
+        r = await self.d.fetchone(f"SELECT COUNT(*) AS n FROM {table} WHERE {column}<? {extra}", (float(before), *args))
+        await self.d.execute(f"DELETE FROM {table} WHERE {column}<? {extra}", (float(before), *args))
+        return int(r["n"])
 
     async def usage_report(self, since: float) -> list[dict[str, Any]]:
         return await self.d.fetchall(

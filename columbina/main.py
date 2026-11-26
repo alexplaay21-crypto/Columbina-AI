@@ -77,7 +77,8 @@ async def main() -> None:
     scheduler = None
     try:
         tg = TelegramInterface(s, engine, media)
-        scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds, engine.inner)
+        scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds, engine.inner,
+                              heartbeat=s.media_tmp_dir.parent / "heartbeat")
         scheduler.start()
         await tg.run()
     finally:

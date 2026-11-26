@@ -33,12 +33,15 @@ python -m columbina.main
 ## Проверки
 
 ```bash
-python -m pytest                     # 95 детерминированных тестов на SQLite, без API
-TEST_DATABASE_URL=postgresql://user@localhost/columbina_test python -m pytest   # +32 тех же на PostgreSQL
+python -m pytest                     # 184 теста на SQLite, без API
+TEST_DATABASE_URL=postgresql://user@localhost/columbina_test python -m pytest   # +71 тех же на PostgreSQL
 python scripts/token_report.py       # оценка токенов и стоимости
 python -m evals.run_evals            # живые сценарии характера + модель-судья (нужен ключ, ~$0.5)
 ```
 
 ## Команды бота
 
-`/name` · `/city` · `/tz` · `/initiative off|rare|normal` · `/quiet 23 9` · `/memory` · `/hall` · `/forget` · `/stats` (админ)
+В меню Telegram: `/start` `/help` `/status` `/memory` `/diary` `/profile` `/thoughts` `/settings`.
+Ещё работают при вводе: `/mood` `/emotions` `/memories` `/remember` `/forget` `/recall` `/history` `/promises`
+`/dream` `/reflection` `/interests` `/activity` `/quiet` `/wake` `/pause` `/resume` `/backup` `/export` `/reset`
+`/name` `/city` `/tz` `/initiative` `/hall` `/about` `/stats` `/check` (админ). Всё доступно и через `/settings`.

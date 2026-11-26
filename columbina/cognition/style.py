@@ -12,6 +12,8 @@ REACT_RE = re.compile(r"<react>\s*([^<]{1,8})\s*</react>")
 TEXT_REACT_RE = re.compile(
     r"^\s*[\[(]?\s*(?:реакция|reaction|react)\s*[:：]?\s*([^\s\])]{1,4})\s*[\])]?[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
 SPLIT_RE = re.compile(r"\n\s*-{3,}\s*\n")
+ASSISTANTISH = re.compile(r"отличный вопрос|рада помочь|вот несколько|надеюсь,? это поможет|если хочешь,? (?:я )?могу|"
+                          r"не стесняйся|в заключение|подытожим|во-первых.*во-вторых|я здесь, чтобы", re.I | re.S)
 
 
 @dataclass
@@ -105,6 +107,11 @@ class StyleGuard:
                 hints.append("не обращайся по имени")
         if sum(1 for r in window if "\n- " in r or re.search(r"^\d\. ", r, re.M)) >= 2:
             hints.append("без списков — это разговор")
+        # Защита характера: если начинает звучать как ассистент — мягко возвращаем к себе.
+        drift = sum(1 for r in window if ASSISTANTISH.search(r))
+        if drift >= 2:
+            hints.append("ты начинаешь звучать как вежливый ассистент — говори как Коломбина: проще, со своим мнением, "
+                         "без услужливых оборотов")
         for _, (rx, mx, hint) in self.sig_markers.items():
             n = sum(len(rx.findall(r)) for r in window)
             if n > mx:

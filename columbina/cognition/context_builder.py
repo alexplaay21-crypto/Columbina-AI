@@ -123,7 +123,7 @@ def render_inner_context(ctx: TurnContext, budget_tokens: int = 1400) -> str:
                             "у тебя за это время была своя жизнь. Без упрёков и подсчёта дней."))
 
     if ctx.recall.facts:
-        facts = "; ".join(f"{f.key}: {f.value}" for f in ctx.recall.facts)
+        facts = "; ".join(f"{f.key}: {f.value}" + (" (догадка)" if f.confidence < 0.5 else "") for f in ctx.recall.facts)
         sections.append((3, "Что ты знаешь о собеседнике: " + facts))
 
     if ctx.summary:

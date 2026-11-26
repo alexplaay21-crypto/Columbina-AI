@@ -127,6 +127,9 @@ class Settings:
 
     # Стоимость
     daily_budget_usd: float = field(default_factory=lambda: _env_float("DAILY_BUDGET_USD_PER_USER", 3.0))
+    daily_budget_total: float = field(default_factory=lambda: _env_float("DAILY_BUDGET_USD_TOTAL", 0.0))
+    daily_calls_per_user: int = field(default_factory=lambda: _env_int("DAILY_LLM_CALLS_PER_USER", 0))
+    background_calls_per_user: int = field(default_factory=lambda: _env_int("BACKGROUND_CALLS_PER_USER", 40))
 
     # Интернет-инструменты (модель сама решает, когда искать)
     web_enabled: bool = field(default_factory=lambda: _env_bool("WEB_ENABLED", True))

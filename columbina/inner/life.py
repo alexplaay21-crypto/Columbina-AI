@@ -138,6 +138,9 @@ class InnerLife:
         done_today = await self.store.research_since(user_id, now - 86400)
         if sum(r["steps"] for r in done_today if r["updated_at"] >= now - 86400) >= self.limits.research_per_day:
             return False
+        cap = getattr(self.engine.s, "background_calls_per_user", 0)
+        if cap and await self.store.calls_since(user_id, now - 86400, ("research", "dream", "vision")) >= cap:
+            return False
         user = await self.store.get_user(user_id)
         # Исследует только тех, с кем вообще общается (не тратим токены на «мёртвые» чаты).
         return bool(user and user.last_user_msg_at and now - user.last_user_msg_at < 14 * 86400)
@@ -319,7 +322,7 @@ class InnerLife:
                                        emotion_text)
 
     # ------------------------------------------------------------------ для контекста разговора
-    async def context_bits(self, user_id: int, query_vec: np.ndarray | None) -> dict[str, Any]:
+    async def context_bits(self, user_id: int) -> dict[str, Any]:
         """Что из её внутренней жизни может всплыть в разговоре (бюджет — в context_builder)."""
         findings = await self.store.unshared_findings(user_id)
         goals = await self.store.goals(user_id)

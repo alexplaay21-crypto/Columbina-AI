@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from pathlib import Path
 
 from .engine import InitiativeEngine
 
@@ -11,9 +13,14 @@ log = logging.getLogger(__name__)
 
 
 class Scheduler:
-    def __init__(self, initiative: InitiativeEngine, send, interval_seconds: int = 600, inner=None):
+    def __init__(self, initiative: InitiativeEngine, send, interval_seconds: int = 600, inner=None,
+                 heartbeat: Path | None = None):
+        from ..memory.maintenance import Maintenance
+
         self.initiative = initiative
         self.inner = inner
+        self.maintenance = Maintenance(initiative.store)
+        self.heartbeat = heartbeat
         self.send = send
         self.interval = interval_seconds
         self._task: asyncio.Task | None = None
@@ -27,6 +34,18 @@ class Scheduler:
                     log.info("initiative: sent %d", n)
             except Exception:
                 log.exception("scheduler tick failed")
+            try:
+                for user in await self.initiative.store.list_users():
+                    if self.maintenance.due(user.user_id, time.time()):
+                        await self.maintenance.run(user.user_id)
+            except Exception:
+                log.exception("maintenance failed")
+            if self.heartbeat is not None:  # для healthcheck Docker: планировщик жив
+                try:
+                    self.heartbeat.parent.mkdir(parents=True, exist_ok=True)
+                    self.heartbeat.write_text(str(time.time()))
+                except Exception:
+                    log.debug("heartbeat write failed", exc_info=True)
             if self.inner is not None:  # внутренняя жизнь — по одному собеседнику за раз, в бюджете
                 try:
                     for user in await self.initiative.store.list_users():
