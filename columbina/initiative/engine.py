@@ -97,6 +97,13 @@ class InitiativeEngine:
                     f"{fact}. Поделись находкой коротко и по-своему" + (f", например так: {hint}" if hint else "")
                     + ". Можно дать ссылку. Не выдумывай сверх прочитанного"), 3.2, f["id"]))
                 break
+        if rel.stage >= 2 and not sent_within("curious", 3) and user.last_user_msg_at \
+                and (ts - user.last_user_msg_at) > 20 * 3600:
+            talked = [i for i in await self.store.interests(user.user_id) if i["source"] == "conversation"]
+            if talked:
+                topic = max(talked, key=lambda i: i["weight"])["topic"]
+                out.append(Candidate("curious", f"тебе правда стало любопытно про «{topic}» — вы об этом говорили. "
+                                                 "Задай один живой вопрос из своего любопытства, не допрос", 2.3))
         if rel.stage >= 3 and not sent_within("dream", 5):
             dream = await self.store.diary(user.user_id, "dream", limit=1)
             if dream and ts - dream[0]["created_at"] < 10 * 3600:

@@ -33,8 +33,8 @@ python -m columbina.main
 ## Проверки
 
 ```bash
-python -m pytest                     # 184 теста на SQLite, без API
-TEST_DATABASE_URL=postgresql://user@localhost/columbina_test python -m pytest   # +71 тех же на PostgreSQL
+python -m pytest                     # 192 теста на SQLite, без API
+TEST_DATABASE_URL=postgresql://user@localhost/columbina_test python -m pytest   # +77 тех же на PostgreSQL
 python scripts/token_report.py       # оценка токенов и стоимости
 python -m evals.run_evals            # живые сценарии характера + модель-судья (нужен ключ, ~$0.5)
 ```

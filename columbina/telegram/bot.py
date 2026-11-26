@@ -101,10 +101,20 @@ class _Pending:
 
 
 class TelegramInterface:
-    def __init__(self, settings: Settings, engine: CognitiveEngine, media: MediaProcessor):
+    def __init__(self, settings: Settings, engine: CognitiveEngine, media: MediaProcessor, tts=None):
         self.s = settings
         self.engine = engine
         self.media = media
+        self.tts = tts  # GeminiTTS или None
+        self._last_was_circle: dict[int, bool] = {}
+        self.stickers: dict[str, str] = {}  # эмодзи → file_id из STICKER_SET
+        engine.voice_available = bool(tts and tts.available)
+        self.giphy = None
+        if settings.giphy_api_key:
+            from ..media.gif import GiphySearch
+
+            self.giphy = GiphySearch(settings.giphy_api_key)
+            engine.gifs_available = True
         self.bot = Bot(token=settings.telegram_token)
         self.dp = Dispatcher()
         self.router = Router()
@@ -491,6 +501,8 @@ class TelegramInterface:
             await self.bot.send_message(chat_id, "Хм… что-то во мне спуталось. Скажи ещё раз?")
             return
         typing.cancel()
+        if reply.silent and not reply.reaction:
+            return  # она решила промолчать — так тоже бывает
         if reply.reaction:
             try:
                 await self.bot.set_message_reaction(chat_id, last_msg.message_id,
@@ -500,7 +512,22 @@ class TelegramInterface:
         if reply.parts:
             # Если собеседник отвечал на конкретное сообщение — отвечаем «реплаем» на его сообщение.
             quoted = next((m for m, _ in reversed(pend.items) if m.reply_to_message), None) if reply.quote else None
-            await self.send_parts(chat_id, reply.parts, reply_to=quoted.message_id if quoted else None)
+            heard = any(m.voice or m.video_note for m, _ in pend.items)
+            self._last_was_circle[uid] = any(m.video_note for m, _ in pend.items)
+            if not await self._maybe_voice(uid, chat_id, reply, heard, quoted.message_id if quoted else None):
+                await self.send_parts(chat_id, reply.parts, reply_to=quoted.message_id if quoted else None)
+        if reply.gif and self.giphy:
+            url = await self.giphy.find(reply.gif)
+            if url:
+                try:
+                    await self.bot.send_animation(chat_id, url)
+                except Exception:
+                    log.debug("gif failed", exc_info=True)
+        if reply.sticker and reply.sticker in self.stickers:
+            try:
+                await self.bot.send_sticker(chat_id, self.stickers[reply.sticker])
+            except Exception:
+                log.debug("sticker failed", exc_info=True)
         if reply.sources:
             from aiogram.types import LinkPreviewOptions
 
@@ -511,6 +538,51 @@ class TelegramInterface:
                 note = "⚙️ (видно только админу) Дневной лимит расходов исчерпан: DAILY_BUDGET_USD_PER_USER"
             if note:
                 await self.bot.send_message(chat_id, note)
+
+    async def _maybe_voice(self, uid: int, chat_id: int, reply, heard: bool, reply_to: int | None) -> bool:
+        """Ответ голосом: когда она сама захотела (<voice>), в ответ на голосовое (режим mirror) или всегда."""
+        if not (self.tts and self.tts.available):
+            return False
+        mode = await self.engine.store.get_setting(uid, "voice", "mirror")
+        want = mode != "off" and (reply.voice or mode == "always" or (mode == "mirror" and heard) or
+                                  (reply.singing and mode != "self"))
+        text = " ".join(reply.parts)
+        if not want or len(text) > self.tts.max_chars:
+            return False
+        from aiogram.enums import ChatAction as CA
+        from aiogram.types import BufferedInputFile, ReplyParameters
+
+        await self.bot.send_chat_action(chat_id, CA.RECORD_VOICE)
+        audio = await self.tts.synthesize(text, singing=reply.singing)
+        if not audio:
+            return False
+        kwargs = {"reply_parameters": ReplyParameters(message_id=reply_to, allow_sending_without_reply=True)} \
+            if reply_to else {}
+        circle = await self.engine.store.get_setting(uid, "circle", "mirror")
+        avatar = Path(self.s.avatar_image) if self.s.avatar_image else None
+        if avatar and avatar.exists() and circle != "off" and (circle == "always" or self._last_was_circle.get(uid)):
+            from ..media.gif import video_note
+
+            await self.bot.send_chat_action(chat_id, CA.RECORD_VIDEO_NOTE)
+            vid = await video_note(avatar, audio, self.s.media_tmp_dir)
+            if vid:
+                await self.bot.send_video_note(chat_id, BufferedInputFile(vid, filename="note.mp4"), **kwargs)
+                return True
+        await self.bot.send_voice(chat_id, BufferedInputFile(audio, filename="voice.ogg"), **kwargs)
+        return True
+
+    async def load_stickers(self) -> None:
+        if not self.s.sticker_set:
+            return
+        try:
+            sset = await self.bot.get_sticker_set(self.s.sticker_set)
+            for st in sset.stickers:
+                if st.emoji and st.emoji not in self.stickers:
+                    self.stickers[st.emoji.replace("\ufe0f", "")] = st.file_id
+            self.engine.sticker_emojis = list(self.stickers)
+            log.info("stickers: %d из набора %s", len(self.stickers), self.s.sticker_set)
+        except Exception:
+            log.warning("не удалось загрузить набор стикеров %s", self.s.sticker_set, exc_info=True)
 
     async def _typing(self, chat_id: int) -> None:
         try:
@@ -647,7 +719,8 @@ class TelegramInterface:
                                             for n, _m, d, main, _a, _s in COMMANDS if main])
         except Exception:
             log.warning("не удалось задать меню команд", exc_info=True)
-        await self.dp.start_polling(self.bot, allowed_updates=["message"])
+        await self.load_stickers()
+        await self.dp.start_polling(self.bot, allowed_updates=["message", "callback_query"])
 
 
 async def _const(text: str) -> str:

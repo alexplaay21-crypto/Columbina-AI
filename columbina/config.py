@@ -120,6 +120,16 @@ class Settings:
     initiative_tick_seconds: int = field(default_factory=lambda: _env_int("INITIATIVE_TICK_SECONDS", 600))
     default_timezone: str = field(default_factory=lambda: _env("DEFAULT_TIMEZONE", "Europe/Moscow"))
 
+    # Голос (Gemini TTS, бесплатный ключ AI Studio) и стикеры
+    tts_api_key: str = field(default_factory=lambda: _env("TTS_API_KEY"))
+    tts_models: tuple[str, ...] = field(default_factory=lambda: tuple(m.strip() for m in _env(
+        "TTS_MODELS", "gemini-2.5-flash-preview-tts,gemini-3.8-flash-tts").split(",") if m.strip()))
+    tts_voice: str = field(default_factory=lambda: _env("TTS_VOICE", "Leda"))
+    sticker_set: str = field(default_factory=lambda: _env("STICKER_SET"))
+    giphy_api_key: str = field(default_factory=lambda: _env("GIPHY_API_KEY"))
+    avatar_image: str = field(default_factory=lambda: _env("AVATAR_IMAGE"))
+    watchdog_seconds: int = field(default_factory=lambda: _env_int("WATCHDOG_SECONDS", 1800))
+
     # Внутренняя жизнь: самостоятельные исследования, сны, дневник
     inner_life_enabled: bool = field(default_factory=lambda: _env_bool("INNER_LIFE_ENABLED", True))
     research_per_day: int = field(default_factory=lambda: _env_int("RESEARCH_PER_DAY", 2))

@@ -12,6 +12,10 @@ REACT_RE = re.compile(r"<react>\s*([^<]{1,8})\s*</react>")
 TEXT_REACT_RE = re.compile(
     r"^\s*[\[(]?\s*(?:реакция|reaction|react)\s*[:：]?\s*([^\s\])]{1,4})\s*[\])]?[ \t]*\n?", re.IGNORECASE | re.MULTILINE)
 SPLIT_RE = re.compile(r"\n\s*-{3,}\s*\n")
+VOICE_RE = re.compile(r"<voice\s*/?>", re.I)
+STICKER_RE = re.compile(r"<sticker>\s*([^<]{1,8})\s*</sticker>", re.I)
+SILENCE_RE = re.compile(r"<silence\s*/?>", re.I)
+GIF_RE = re.compile(r"<gif>\s*([^<]{2,60})\s*</gif>", re.I)
 ASSISTANTISH = re.compile(r"отличный вопрос|рада помочь|вот несколько|надеюсь,? это поможет|если хочешь,? (?:я )?могу|"
                           r"не стесняйся|в заключение|подытожим|во-первых.*во-вторых|я здесь, чтобы", re.I | re.S)
 
@@ -21,6 +25,10 @@ class ParsedReply:
     parts: list[str]
     reaction: str | None
     raw: str
+    voice: bool = False  # она сама хочет ответить голосом (<voice>)
+    sticker: str | None = None  # эмодзи стикера из её набора (<sticker>🌙</sticker>)
+    silent: bool = False  # решила промолчать (<silence/>)
+    gif: str | None = None  # запрос для GIF (<gif>снег падает</gif>)
 
 
 @dataclass
@@ -33,6 +41,13 @@ class StyleVerdict:
 def parse_reply(text: str) -> ParsedReply:
     raw = text or ""
     reaction = None
+    voice = bool(VOICE_RE.search(raw))
+    sm = STICKER_RE.search(raw)
+    sticker = sm.group(1).strip().replace("\ufe0f", "") if sm else None
+    silent = bool(SILENCE_RE.search(raw))
+    gm = GIF_RE.search(raw)
+    gif = gm.group(1).strip() if gm else None
+    raw = GIF_RE.sub("", SILENCE_RE.sub("", STICKER_RE.sub("", VOICE_RE.sub("", raw))))
     m = REACT_RE.search(raw) or TEXT_REACT_RE.search(raw)
     if m:
         emo = m.group(1).strip().replace("\ufe0f", "")
@@ -46,7 +61,8 @@ def parse_reply(text: str) -> ParsedReply:
             parts = paras  # длинный ответ из абзацев — как несколько сообщений подряд
     if len(parts) > 3:
         parts = parts[:2] + ["\n\n".join(parts[2:])]
-    return ParsedReply(parts=parts, reaction=reaction, raw=text)
+    return ParsedReply(parts=parts, reaction=reaction, raw=text, voice=voice, sticker=sticker,
+                       silent=silent and not parts and not gif, gif=gif)
 
 
 class StyleGuard:

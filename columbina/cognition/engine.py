@@ -82,6 +82,11 @@ class Reply:
     cost_usd: float = 0.0
     quote: bool = False  # ответить «реплаем» на сообщение собеседника
     sources: str | None = None  # «Источники: …» отдельным сообщением, если она пользовалась интернетом
+    voice: bool = False  # она сама решила ответить голосом
+    sticker: str | None = None  # file_id не здесь — эмодзи стикера из её набора
+    silent: bool = False  # решила промолчать
+    singing: bool = False  # поёт колыбельную (для голосового — напевно)
+    gif: str | None = None  # запрос GIF, если она решила ответить гифкой
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -106,6 +111,9 @@ class CognitiveEngine:
         self.vision = vision  # VisionAdapter: зрение для моделей без зрения
         self.web = web_tools  # WebTools: поиск, чтение страниц, открытые API (None — интернет выключен)
         self.inner = None  # InnerLife: интересы, исследования, дневник, сны (подключается в main)
+        self.voice_available = False  # есть ли синтез речи (Telegram-слой включает)
+        self.sticker_emojis: list[str] = []  # эмодзи её стикеров, если задан STICKER_SET
+        self.gifs_available = False  # есть ли поиск GIF (GIPHY_API_KEY)
         self.emotions = EmotionModel(persona.emotions)
         self.relationship = RelationshipModel(persona.relationship)
         self.abilities = AbilitiesEngine(persona.abilities)
@@ -276,6 +284,17 @@ class CognitiveEngine:
                 extra_obs.append("похоже, собеседник сменил тему — иди за ним, к прежней вернёшься, если он захочет")
         if any(p.kind == "reply" for p in percepts):
             extra_obs.append("собеседник отвечает на конкретное сообщение — отвечай прежде всего на него")
+        voice_mode = await self.store.get_setting(user_id, "voice", "mirror")
+        if self.voice_available and voice_mode != "off":
+            heard = any(p.kind in ("voice", "video_note") for p in percepts)
+            extra_obs.append("можешь ответить голосом — начни ответ с <voice>" + (
+                "; собеседник прислал голосовое, ответ голосом будет естественным" if heard else
+                " (например, тихо на ночь или спеть колыбельную), но не часто"))
+        if self.gifs_available:
+            extra_obs.append("можешь изредка ответить гифкой: <gif>короткий запрос по-английски</gif>")
+        if self.sticker_emojis:
+            extra_obs.append("у тебя есть стикеры (" + " ".join(self.sticker_emojis[:20]) +
+                             ") — изредка можешь добавить один: <sticker>эмодзи</sticker>")
 
         # --- память ---
         history = await self.store.active_messages(user_id)
@@ -326,15 +345,21 @@ class CognitiveEngine:
             return Reply(parts=[random.choice(PALE_REPLIES)], debug={"error": str(e)})
 
         parsed = parse_reply(reply_text)
-        if not parsed.parts and not parsed.reaction:
+        if not parsed.parts and not parsed.reaction and not parsed.silent:
             parsed = ParsedReply(parts=["…"], reaction=None, raw=reply_text)
-        if not parsed.reaction:
+        if parsed.silent and "?" in user_text:
+            parsed.silent, parsed.reaction = False, parsed.reaction or "🤔"  # на вопрос не молчит
+        if parsed.sticker and parsed.sticker not in self.sticker_emojis:
+            parsed.sticker = None
+        if not parsed.reaction and not parsed.silent:
             parsed.reaction = await self._event_reaction(user_id, appr.emotion_events)
 
         # --- сохранение ---
         user_msg_id = await self.store.add_message(user_id, "user", history_text, at=ts)
         # Реакция хранится в нашем же формате <react>, чтобы модель не училась писать «реакция» текстом.
         stored_reply = "\n\n---\n\n".join(parsed.parts)
+        if parsed.silent:
+            stored_reply = "<silence/>"
         if parsed.reaction:
             stored_reply = f"<react>{parsed.reaction}</react>" + ("\n" + stored_reply if stored_reply else "")
         await self.store.add_message(user_id, "assistant", stored_reply, at=ts + 0.001)
@@ -356,6 +381,8 @@ class CognitiveEngine:
         return Reply(parts=parsed.parts, reaction=parsed.reaction, cost_usd=cost,
                      quote=any(p.kind == "reply" for p in percepts),
                      sources=sources_message(budget, reply_text) if budget else None,
+                     voice=parsed.voice, sticker=parsed.sticker, silent=parsed.silent and not parsed.reaction,
+                     singing=bool(ctx.lullaby), gif=parsed.gif if self.gifs_available else None,
                      debug={"inner_context": inner, "tool_notes": tool_notes, "stage": rel.stage, "emotion": emo_text})
 
     EVENT_REACTIONS = {

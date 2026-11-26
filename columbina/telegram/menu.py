@@ -144,7 +144,12 @@ class MenuController:
             onoff = lambda key, default="on": "вкл" if sets.get(key, default) != "off" else "выкл"  # noqa: E731
             paused = sets.get("paused") == "1"
             quiet = float(sets.get("quiet_until", "0") or 0) > time.time()
+            voice = {"mirror": "в ответ на голос", "always": "всегда", "self": "когда сама захочу",
+                     "off": "выкл"}.get(sets.get("voice", "mirror"), "в ответ на голос")
             rows = [[(f"Пишу первой: {mode} ⇄", "t:initiative")],
+                    [(f"Голосом: {voice} ⇄", "t:voice"),
+                     ("Кружки: " + {"mirror": "на кружок", "always": "всегда", "off": "выкл"}.get(
+                         sets.get("circle", "mirror"), "на кружок") + " ⇄", "t:circle")],
                     [(f"Исследования: {onoff('research')} ⇄", "t:research"), (f"Сны: {onoff('dreams')} ⇄", "t:dreams")],
                     [("▶️ Снять паузу" if paused else "⏸ Пауза", "t:pause"),
                      ("🔔 Разбудить" if quiet else "🤫 Тишина до утра", "t:quiet")],
@@ -182,6 +187,16 @@ class MenuController:
         if what in ("research", "dreams"):
             cur = await st.get_setting(user_id, what, "on")
             await st.set_setting(user_id, what, "off" if cur != "off" else "on")
+            return await self.menu("activity", user_id)
+        if what == "voice":
+            cur = await st.get_setting(user_id, "voice", "mirror")
+            nxt = {"mirror": "always", "always": "self", "self": "off", "off": "mirror"}[cur if cur in
+                                                                                         {"mirror", "always", "self", "off"} else "mirror"]
+            await st.set_setting(user_id, "voice", nxt)
+            return await self.menu("activity", user_id)
+        if what == "circle":
+            cur = await st.get_setting(user_id, "circle", "mirror")
+            await st.set_setting(user_id, "circle", {"mirror": "always", "always": "off"}.get(cur, "mirror"))
             return await self.menu("activity", user_id)
         if what == "pause":
             cur = await st.get_setting(user_id, "paused", "0")

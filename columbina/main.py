@@ -68,6 +68,29 @@ async def build(settings=None):
     return s, engine, media
 
 
+def start_watchdog(scheduler, limit_seconds: int) -> None:
+    """Отдельный поток: если планировщик не отмечался дольше limit — процесс завершается, Docker его перезапустит.
+
+    Ловит и зависший цикл событий (тогда асинхронная проверка не сработала бы)."""
+    import os
+    import threading
+    import time as _t
+
+    if limit_seconds <= 0:
+        return
+
+    def watch() -> None:
+        started = _t.time()
+        while True:
+            _t.sleep(60)
+            last = scheduler.last_tick or started
+            if _t.time() - last > limit_seconds:
+                logging.getLogger(__name__).critical("планировщик молчит %d с — перезапуск", int(_t.time() - last))
+                os._exit(1)
+
+    threading.Thread(target=watch, name="watchdog", daemon=True).start()
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
@@ -76,10 +99,16 @@ async def main() -> None:
     s, engine, media = await build(settings)
     scheduler = None
     try:
-        tg = TelegramInterface(s, engine, media)
+        tts = None
+        if s.tts_api_key:
+            from .media.tts import GeminiTTS
+
+            tts = GeminiTTS(s.tts_api_key, list(s.tts_models), s.tts_voice, s.media_tmp_dir)
+        tg = TelegramInterface(s, engine, media, tts)
         scheduler = Scheduler(InitiativeEngine(engine), tg.send_parts, s.initiative_tick_seconds, engine.inner,
                               heartbeat=s.media_tmp_dir.parent / "heartbeat")
         scheduler.start()
+        start_watchdog(scheduler, s.watchdog_seconds)
         await tg.run()
     finally:
         if scheduler:

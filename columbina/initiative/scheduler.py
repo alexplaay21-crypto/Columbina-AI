@@ -21,6 +21,7 @@ class Scheduler:
         self.inner = inner
         self.maintenance = Maintenance(initiative.store)
         self.heartbeat = heartbeat
+        self.last_tick: float = 0.0
         self.send = send
         self.interval = interval_seconds
         self._task: asyncio.Task | None = None
@@ -40,6 +41,7 @@ class Scheduler:
                         await self.maintenance.run(user.user_id)
             except Exception:
                 log.exception("maintenance failed")
+            self.last_tick = time.time()
             if self.heartbeat is not None:  # для healthcheck Docker: планировщик жив
                 try:
                     self.heartbeat.parent.mkdir(parents=True, exist_ok=True)
