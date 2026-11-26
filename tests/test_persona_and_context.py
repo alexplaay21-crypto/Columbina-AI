@@ -18,7 +18,7 @@ def text(t: str) -> list[Percept]:
 
 def test_core_prompt_is_compact(persona):
     # Ядро — компактно; полное досье в запрос не идёт.
-    assert estimate_tokens(persona.core_prompt) < 4000  # с автопортретом: внешность, дом, вкусы, близкие
+    assert estimate_tokens(persona.core_prompt) < 4300  # с автопортретом и правилами живой речи; кэшируется
     full = (persona.root / "source" / "dossier_main.md").read_text(encoding="utf-8")
     assert len(full) > 3 * len(persona.core_prompt)
 

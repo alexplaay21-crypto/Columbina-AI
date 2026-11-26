@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,6 +42,12 @@ class StyleVerdict:
     soft_fixes: list[str] = field(default_factory=list)
 
 
+HOLLOW_OPENING = re.compile(r"^(?:о,? )?(?:как )?(?:здорово|отлично|классно|круто|супер|замечательно|прекрасно|"
+                            r"интересно|понимаю)[!.,]+\s+", re.I)
+SENT_SPLIT = re.compile(r"(?<=[.!?…])\s+(?=[А-ЯЁA-Z«\"(])")
+TO_USER = re.compile(r"(?<!\w)(?:ты|тебя|тебе|тобой|твой|твоя|твоё|твое|твои|вы|вас|вам)(?!\w)", re.I)
+
+
 def parse_reply(text: str) -> ParsedReply:
     raw = text or ""
     reaction = None
@@ -60,7 +67,8 @@ def parse_reply(text: str) -> ParsedReply:
         if emo in ALLOWED_REACTIONS:
             reaction = emo
         raw = TEXT_REACT_RE.sub("", REACT_RE.sub("", raw)).strip()
-    parts = [p.strip() for p in SPLIT_RE.split(raw) if p.strip()]
+    # Обломки эмодзи (склейка U+200D, селектор U+FE0F) остаются после вырезания тегов — убираем по краям.
+    parts = [q for p in SPLIT_RE.split(raw) if (q := p.strip().strip("\u200d\ufe0f").strip())]
     if len(parts) == 1 and len(raw) > 320:
         paras = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
         if 2 <= len(paras) <= 4 and all(len(p) < 700 for p in paras):
@@ -87,6 +95,7 @@ class StyleGuard:
             for k, v in sig.get("markers", {}).items()
         }
         self.max_excl = int(rules.get("max_exclamations", 1))
+        self.rng = random.Random()
 
     def check(self, text: str) -> StyleVerdict:
         v = StyleVerdict(fixed_text=text)
@@ -125,6 +134,38 @@ class StyleGuard:
         fixed = re.sub(r"\n{3,}", "\n\n", fixed).strip()
         v.fixed_text = fixed
         return v
+
+    def de_interview(self, parts: list[str], prev_reply: str, user_text: str, rng: random.Random | None = None) -> list[str]:
+        """Убирает «интервью»: пустую похвалу в начале, лишние вопросы и дежурный вопрос в конце.
+
+        Модель любит схему «Здорово! Как прошло? Что делал?» — живой человек так не пишет.
+        Оставляем максимум один вопрос; вопрос в конце снимаем, если прошлый ответ тоже кончался
+        вопросом, или (иногда) если это дежурный вопрос к собеседнику. Содержательное не трогаем.
+        """
+        rng = rng or self.rng
+        prev_q = prev_reply.rstrip().endswith("?")
+        out: list[str] = []
+        seen_q = False
+        for part in parts:
+            m = HOLLOW_OPENING.match(part)
+            if m and len(part) - m.end() > 8:
+                rest = part[m.end():]
+                part = rest[0].upper() + rest[1:]
+            sents = SENT_SPLIT.split(part)
+            kept: list[str] = []
+            for sent in sents:
+                if sent.rstrip().endswith("?"):
+                    if seen_q and kept and len(sent.split()) > 2:
+                        continue  # второй вопрос подряд — уже допрос
+                    seen_q = True
+                kept.append(sent)
+            out.append(" ".join(kept))
+        last = SENT_SPLIT.split(out[-1]) if out else []
+        if len(last) >= 2 and last[-1].rstrip().endswith("?") and "?" not in last[-2]:
+            generic = bool(TO_USER.search(last[-1])) and len(last[-1]) < 90
+            if prev_q or (generic and rng.random() < 0.6):
+                out[-1] = " ".join(last[:-1])
+        return [o.strip() for o in out if o.strip()] or parts
 
     def overused(self, recent_replies: list[str], user_name: str | None = None) -> list[str]:
         """Подсказки против повторов: какие характерные приметы уже приелись."""

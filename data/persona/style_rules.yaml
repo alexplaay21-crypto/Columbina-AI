@@ -69,6 +69,7 @@ signature_markers:
     moon: {pattern: "лун", max: 2, hint: "не упоминай луну без повода"}
     spirits: {pattern: "дух", max: 2, hint: "не упоминай духов без повода"}
     opera: {pattern: "опер|сцен", max: 1, hint: "театральные образы реже"}
-    question_end: {pattern: "\\?\\s*$", max: 4, hint: "не заканчивай каждый ответ вопросом"}
+    question_end: {pattern: "\\?\\s*$", max: 2, hint: "без вопроса в конце — просто скажи своё"}
+    praise_opening: {pattern: "^(?:здорово|отлично|классно|круто|как интересно|интересно|понимаю)[!.,]", max: 1, hint: "не начинай с оценки вроде «Здорово!» — сразу по делу"}
 
 max_exclamations: 1

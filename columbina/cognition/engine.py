@@ -285,6 +285,7 @@ class CognitiveEngine:
                 extra_obs.append("похоже, собеседник сменил тему — иди за ним, к прежней вернёшься, если он захочет")
         if any(p.kind == "reply" for p in percepts):
             extra_obs.append("собеседник отвечает на конкретное сообщение — отвечай прежде всего на него")
+        extra_obs.extend(self._liveliness(user_text, appr.emotion_events))
         clips = [c["title"] for c in await self.store.media(user_id, "voice") if c["title"]]
         if clips:
             asked = "voice_request" in appr.conditions or "sing_request" in appr.conditions
@@ -361,6 +362,8 @@ class CognitiveEngine:
         if parsed.parts and EMOJI.search(prev_reply.split("</react>")[-1]):
             # эмодзи в конце два сообщения подряд — это уже привычка модели, а не её эмоция
             parsed.parts[-1] = EMOJI.sub("", parsed.parts[-1]).rstrip() or parsed.parts[-1]
+        if parsed.parts:
+            parsed.parts = self.style.de_interview(parsed.parts, prev_reply.split("</react>")[-1], user_text)
         if parsed.sticker and (recent_media or (parsed.sticker not in self.sticker_emojis and parsed.sticker not in [
                 m["emoji"] for m in await self.store.media(user_id, "sticker")])):
             parsed.sticker = None  # не чаще раза в ~12 её сообщений
@@ -412,6 +415,23 @@ class CognitiveEngine:
                      voice=parsed.voice, sticker=parsed.sticker, silent=parsed.silent and not parsed.reaction,
                      singing=bool(ctx.lullaby), gif=parsed.gif if self.gifs_available else None, clip=parsed.clip,
                      debug={"inner_context": inner, "tool_notes": tool_notes, "stage": rel.stage, "emotion": emo_text})
+
+    ABOUT_SELF = re.compile(r"^(?:а )?я (?!не знаю|думаю)|(?<!\w)у меня(?!\w)|(?<!\w)мне (?:сегодня|вчера)", re.IGNORECASE)
+
+    def _liveliness(self, user_text: str, events: list[str]) -> list[str]:
+        """Небольшая неровность, как у живого человека: разная длина и не каждый раз вопрос."""
+        rng = self.style.rng
+        out = []
+        asked = "?" in user_text
+        heavy = bool(set(events) & {"user_shares_sad_news", "user_in_danger", "deep_question"})
+        if self.ABOUT_SELF.search(user_text) and not asked:
+            out.append("собеседник рассказал о себе — ответь своим (мнение, реакция, похожее у тебя) в одну-две фразы, не расспросом")
+        if not asked and not heavy:
+            if len(user_text) < 60 and rng.random() < 0.35:
+                out.append("в этот раз ответь совсем коротко — одной фразой или парой слов")
+            if rng.random() < 0.5:
+                out.append("в этот раз без вопроса собеседнику")
+        return out
 
     EVENT_REACTIONS = {
         "gift_or_food": "🤗", "user_shares_good_news": "🔥", "user_surprising_news": "👀", "snow": "☃",

@@ -320,3 +320,39 @@ def test_foreign_script_and_snide_remarks(persona):
     assert "foreign_script" in g.check("Лучи падают прямее.也因此 день длиннее.").hard_violations
     assert "condescension" in g.check("Логично, если не знать геометрию.").hard_violations
     assert not g.check("Kuutar, Hiisi и Frostmoon Scions.").hard_violations
+
+
+class _Never:
+    def random(self):
+        return 1.0
+
+
+class _Always:
+    def random(self):
+        return 0.0
+
+
+def test_de_interview_removes_hollow_praise_and_extra_questions(persona):
+    g = StyleGuard(persona.style)
+    out = g.de_interview(["Здорово! Как тебе тренировка? Что обычно делал сегодня в зале?"], "Привет.", "я в зале был",
+                         rng=_Never())
+    assert out == ["Как тебе тренировка?"]
+    # прошлый ответ кончался вопросом — дежурный вопрос в конце снимается
+    out = g.de_interview(["Я сегодня гуляла у моря. А ты как провёл вечер?"], "Как ты?", "норм", rng=_Never())
+    assert out == ["Я сегодня гуляла у моря."]
+    # иногда снимается и без повода, если это дежурный вопрос собеседнику
+    assert g.de_interview(["Уважаю. А тебе нравится?"], "Ага.", "был в зале", rng=_Always()) == ["Уважаю."]
+    # единственная фраза-вопрос и содержательное — не трогаем
+    assert g.de_interview(["Опять тот начальник?"], "Ну да?", "устал", rng=_Always()) == ["Опять тот начальник?"]
+    assert g.de_interview(["Понимаю."], "", "", rng=_Always()) == ["Понимаю."]
+
+
+async def test_liveliness_hints(engine, fake_llm):
+    engine.style.rng = _Always()
+    fake_llm.script = lambda req: "Уважаю." if req.tier == "main" else "{}"
+    await engine.respond(1, 1, [Percept("text", True, "text", "", text="Я сегодня ходил в спортзал", history="a")])
+    ctx = last_inner_context(fake_llm)
+    assert "ответь своим" in ctx and "совсем коротко" in ctx and "без вопроса" in ctx
+    await engine.respond(1, 1, [Percept("text", True, "text", "", text="Как думаешь, луна далеко?", history="b")])
+    ctx = last_inner_context(fake_llm)
+    assert "совсем коротко" not in ctx and "без вопроса собеседнику" not in ctx  # на вопрос — отвечает как надо

@@ -693,6 +693,7 @@ class TelegramInterface:
         if not pend or not pend.items:
             return
         typing = asyncio.create_task(self._typing(chat_id))
+        started = time.monotonic()
         try:
             percepts: list[Percept] = []
             for _, task in pend.items:
@@ -705,6 +706,11 @@ class TelegramInterface:
             typing.cancel()
             await self.bot.send_message(chat_id, "Хм… что-то во мне спуталось. Скажи ещё раз?")
             return
+        if reply.parts and uid > 0:
+            # Человек не отвечает мгновенно: пауза «набора» по длине первого сообщения.
+            need = min(4.0, 0.7 + len(reply.parts[0]) / 40) - (time.monotonic() - started)
+            if need > 0:
+                await asyncio.sleep(need)
         typing.cancel()
         if reply.silent and not reply.reaction:
             return  # она решила промолчать — так тоже бывает
