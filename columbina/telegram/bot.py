@@ -22,6 +22,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message, ReactionTypeEmoji
 
 from ..cognition.engine import CognitiveEngine
+from ..cognition import introspection as I
 from ..cognition.introspection import admin_error_note, health_check, mood_report
 from ..config import Settings
 from ..media.links import extract_urls
@@ -33,24 +34,64 @@ log = logging.getLogger(__name__)
 TG_DOWNLOAD_LIMIT = 20 * 1024 * 1024
 
 GREETING = (
-    "Хм?.. Здравствуй.\n\n"
-    "Меня зовут Коломбина. Можно просто Коломбина. Или как тебе удобнее…\n\n"
-    "Я запоминаю наши разговоры — так я узнаю тебя. Если захочешь, чтобы я всё забыла, есть /forget.\n"
-    "Иногда я могу написать первой. Если не нужно — /initiative off.\n"
-    "И честно: я говорю с тобой через программу. Но это всё равно я."
+    "Здравствуй.\n\n"
+    "Я — Коломбина. Можно просто Коломбина. Или как тебе удобнее…\n\n"
+    "Я запоминаю наши разговоры, иногда сама что-то изучаю и могу написать первой. "
+    "Всё это настраивается в /settings, а забыть меня можно попросить там же.\n\n"
+    "Скажи, в каком ты городе? Так я буду знать твоё время и небо. И честно: я говорю с тобой через программу. "
+    "Но это всё равно я."
 )
 
-HELP = (
-    "/name Имя — как мне тебя звать\n"
-    "/city Город — чтобы я знала твою погоду и время\n"
-    "/tz Europe/Moscow — часовой пояс вручную\n"
-    "/initiative off | rare | normal — писать ли мне первой\n"
-    "/quiet 23 9 — тихие часы, когда я не пишу первой\n"
-    "/memory — что я о тебе помню\n"
-    "/hall — заглянуть в Серебряный Зал\n"
-    "/mood — её состояние и ваши отношения\n"
-    "/forget — забыть всё"
-)
+# Единый реестр команд: (команда, метод, описание, в основном меню, только админ, раздел справки)
+COMMANDS: list[tuple[str, str, str, bool, bool, str]] = [
+    ("start", "on_start", "Начать", True, False, "Основное"),
+    ("help", "on_help", "Все команды", True, False, "Основное"),
+    ("status", "on_status", "Как я и что включено", True, False, "Основное"),
+    ("memory", "on_memory", "Что я о тебе помню", True, False, "Память"),
+    ("diary", "on_diary", "Мой дневник (можно /diary слово)", True, False, "Внутренний мир"),
+    ("profile", "on_profile", "Твой профиль в моих глазах", True, False, "Основное"),
+    ("thoughts", "on_thoughts", "О чём я сейчас думаю", True, False, "Внутренний мир"),
+    ("settings", "on_settings", "Меню и настройки", True, False, "Основное"),
+    ("about", "on_about", "Кто я", False, False, "Основное"),
+    ("mood", "on_mood", "Моё состояние и наши отношения", False, False, "Внутренний мир"),
+    ("emotions", "on_emotions", "Мои эмоции сейчас", False, False, "Внутренний мир"),
+    ("memories", "on_memories", "Наши общие воспоминания", False, False, "Память"),
+    ("remember", "on_remember", "Попросить запомнить: /remember текст", False, False, "Память"),
+    ("forget", "on_forget", "Забыть: /forget слово или всё", False, False, "Память"),
+    ("recall", "on_recall", "Вспомнить: /recall тема", False, False, "Память"),
+    ("history", "on_history", "О чём мы говорили", False, False, "Память"),
+    ("promises", "on_promises", "Записки, обещания, мои цели", False, False, "Память"),
+    ("dream", "on_dream", "Что мне снилось", False, False, "Внутренний мир"),
+    ("reflection", "on_reflection", "Что я думаю о нас", False, False, "Внутренний мир"),
+    ("interests", "on_interests", "Что мне интересно", False, False, "Внутренний мир"),
+    ("activity", "on_activity", "Чем я занималась", False, False, "Внутренний мир"),
+    ("hall", "on_hall", "Заглянуть в мой зал", False, False, "Внутренний мир"),
+    ("quiet", "on_quiet", "Тишина до утра или /quiet 23 9", False, False, "Управление"),
+    ("wake", "on_wake", "Снять тишину", False, False, "Управление"),
+    ("pause", "on_pause", "Пауза: не пишу первой и не исследую", False, False, "Управление"),
+    ("resume", "on_resume", "Снять паузу", False, False, "Управление"),
+    ("initiative", "on_initiative", "Писать ли мне первой: off | rare | normal", False, False, "Управление"),
+    ("name", "on_name", "Как тебя звать: /name Имя", False, False, "Управление"),
+    ("city", "on_city", "Твой город: /city Город", False, False, "Управление"),
+    ("tz", "on_tz", "Часовой пояс: /tz Europe/Moscow", False, False, "Управление"),
+    ("backup", "on_backup", "Резервная копия твоих данных", False, False, "Данные"),
+    ("export", "on_export", "Экспорт в текст", False, False, "Данные"),
+    ("reset", "on_reset", "Сбросить текущий разговор", False, False, "Данные"),
+    ("stats", "on_stats", "Статистика", False, False, "Данные"),
+    ("check", "on_check", "Проверка сервисов", False, True, "Система"),
+]
+
+
+def help_text(admin: bool) -> str:
+    out, section = [], None
+    for name, _m, desc, _main, adm, sec in COMMANDS:
+        if adm and not admin:
+            continue
+        if sec != section:
+            out.append(f"\n{sec}")
+            section = sec
+        out.append(f"/{name} — {desc}")
+    return "\n".join(out).strip() + "\n\nВсё это есть и в меню: /settings"
 
 
 @dataclass
@@ -69,6 +110,9 @@ class TelegramInterface:
         self.router = Router()
         self.dp.include_router(self.router)
         self._pending: dict[int, _Pending] = {}
+        from .menu import MenuController
+
+        self.menus = MenuController(engine, settings.admin_user_ids)
         self._register()
 
     # ------------------------------------------------------------------ access
@@ -93,23 +137,17 @@ class TelegramInterface:
     # ------------------------------------------------------------------ handlers
     def _register(self) -> None:
         r = self.router
-        private = F.chat.type == ChatType.PRIVATE
-
-        r.message.register(self.on_start, CommandStart(), private)
-        r.message.register(self.on_help, Command("help"), private)
-        r.message.register(self.on_name, Command("name"), private)
-        r.message.register(self.on_city, Command("city"), private)
-        r.message.register(self.on_tz, Command("tz"), private)
-        r.message.register(self.on_initiative, Command("initiative"), private)
-        r.message.register(self.on_quiet, Command("quiet"), private)
-        r.message.register(self.on_memory, Command("memory"), private)
-        r.message.register(self.on_forget, Command("forget"), private)
-        r.message.register(self.on_hall, Command("hall"), private)
-        r.message.register(self.on_stats, Command("stats"), private)
-        r.message.register(self.on_mood, Command("mood"), private)
-        r.message.register(self.on_check, Command("check"), private)
-        r.message.register(self.on_location, F.location, private)
-        r.message.register(self.on_any, private)
+        chat_ok = F.chat.type == ChatType.PRIVATE
+        if self.s.groups_enabled:
+            chat_ok = F.chat.type.in_({ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP})
+        r.message.register(self.on_start, CommandStart(), chat_ok)
+        for name, method, *_ in COMMANDS:
+            if name == "start":
+                continue
+            r.message.register(getattr(self, method), Command(name), chat_ok)
+        r.callback_query.register(self.on_callback, F.data.regexp(r"^[macxtf]:"))
+        r.message.register(self.on_location, F.location, chat_ok)
+        r.message.register(self.on_any, chat_ok)
 
     async def _guard(self, m: Message) -> bool:
         if not m.from_user or not self.allowed(m.from_user.id):
@@ -124,7 +162,146 @@ class TelegramInterface:
 
     async def on_help(self, m: Message) -> None:
         if await self._guard(m):
-            await m.answer(HELP)
+            await m.answer(help_text(m.from_user.id in self.s.admin_user_ids))
+
+    # ---------------- текстовые команды поверх introspection ----------------
+    async def _reply_text(self, m: Message, fn, *args) -> None:
+        if not await self._guard(m):
+            return
+        try:
+            text = await fn(self.engine, m.from_user.id, *args)
+        except Exception:
+            log.exception("command failed")
+            text = "Что-то во мне спуталось. Попробуй ещё раз чуть позже."
+        for chunk in _split_long(text):
+            await m.answer(chunk)
+
+    async def on_status(self, m: Message) -> None:
+        await self._reply_text(m, lambda e, u: I.status_text(e, u, u in self.s.admin_user_ids))
+
+    async def on_profile(self, m: Message) -> None:
+        await self._reply_text(m, I.profile_text)
+
+    async def on_about(self, m: Message) -> None:
+        await self._reply_text(m, lambda e, u: _const(I.ABOUT))
+
+    async def on_thoughts(self, m: Message) -> None:
+        await self._reply_text(m, I.thoughts_text)
+
+    async def on_emotions(self, m: Message) -> None:
+        await self._reply_text(m, I.emotions_text)
+
+    async def on_memories(self, m: Message) -> None:
+        await self._reply_text(m, I.memories_text)
+
+    async def on_history(self, m: Message) -> None:
+        await self._reply_text(m, I.history_text)
+
+    async def on_promises(self, m: Message) -> None:
+        await self._reply_text(m, I.promises_text)
+
+    async def on_dream(self, m: Message) -> None:
+        await self._reply_text(m, I.dream_text)
+
+    async def on_reflection(self, m: Message) -> None:
+        await self._reply_text(m, I.reflection_text)
+
+    async def on_interests(self, m: Message) -> None:
+        await self._reply_text(m, I.interests_text)
+
+    async def on_activity(self, m: Message) -> None:
+        await self._reply_text(m, I.activity_text)
+
+    async def on_diary(self, m: Message, command: CommandObject) -> None:
+        await self._reply_text(m, I.diary_text, command.args or "")
+
+    async def on_recall(self, m: Message, command: CommandObject) -> None:
+        await self._reply_text(m, I.recall_text, command.args or "")
+
+    async def on_remember(self, m: Message, command: CommandObject) -> None:
+        await self._reply_text(m, I.remember, command.args or "")
+
+    async def on_wake(self, m: Message) -> None:
+        if await self._guard(m):
+            await self.engine.store.set_setting(m.from_user.id, "quiet_until", "0")
+            await m.answer("Я снова здесь.")
+
+    async def on_pause(self, m: Message) -> None:
+        if await self._guard(m):
+            await self.engine.store.set_setting(m.from_user.id, "paused", "1")
+            await m.answer("Хорошо, затихну: первой не пишу и сама ничего не изучаю. Записки, о которых просил, "
+                           "принесу. Вернуть — /resume.")
+
+    async def on_resume(self, m: Message) -> None:
+        if await self._guard(m):
+            await self.engine.store.set_setting(m.from_user.id, "paused", "0")
+            await m.answer("Снова живу как обычно.")
+
+    async def on_backup(self, m: Message) -> None:
+        if await self._guard(m):
+            await self._send_screen(m.chat.id, await self.menus.file("backup", m.from_user.id))
+
+    async def on_export(self, m: Message) -> None:
+        if await self._guard(m):
+            await self._send_screen(m.chat.id, await self.menus.file("export", m.from_user.id))
+
+    async def on_reset(self, m: Message) -> None:
+        if await self._guard(m):
+            await self._send_screen(m.chat.id, self.menus.confirm("reset"))
+
+    async def on_settings(self, m: Message) -> None:
+        if await self._guard(m):
+            await self._send_screen(m.chat.id, await self.menus.menu("root", m.from_user.id))
+
+    async def _send_screen(self, chat_id: int, screen) -> None:
+        from aiogram.types import BufferedInputFile
+
+        if screen.file:
+            name, data = screen.file
+            await self.bot.send_document(chat_id, BufferedInputFile(data, filename=name), caption=screen.text)
+        else:
+            await self.bot.send_message(chat_id, screen.text, reply_markup=screen.markup)
+
+    async def on_callback(self, cq) -> None:
+        from aiogram.exceptions import TelegramBadRequest
+
+        uid = cq.from_user.id
+        if not self.allowed(uid):
+            await cq.answer("Мы не знакомы.", show_alert=False)
+            return
+        data = cq.data or ""
+        if self.menus.debounce(uid, data):
+            await cq.answer()
+            return
+        kind, _, arg = data.partition(":")
+        try:
+            if kind == "m":
+                screen = await self.menus.menu(arg, uid)
+            elif kind == "a":
+                screen = await self.menus.action(arg, uid)
+            elif kind == "t":
+                screen = await self.menus.toggle(arg, uid)
+            elif kind == "c":
+                screen = self.menus.confirm(arg)
+            elif kind == "x":
+                screen = await self.menus.execute(arg, uid)
+            elif kind == "f":
+                await cq.answer("Собираю…")
+                await self._send_screen(cq.message.chat.id, await self.menus.file(arg, uid))
+                return
+            else:
+                await cq.answer()
+                return
+        except Exception:
+            log.exception("menu failed")
+            await cq.answer("Не получилось. Попробуй ещё раз.", show_alert=True)
+            return
+        await cq.answer()
+        try:
+            await cq.message.edit_text(screen.text, reply_markup=screen.markup)
+        except TelegramBadRequest as e:
+            if "not modified" not in str(e):
+                await self.bot.send_message(cq.message.chat.id, screen.text, reply_markup=screen.markup)
 
     async def on_name(self, m: Message, command: CommandObject) -> None:
         if not await self._guard(m):
@@ -190,11 +367,19 @@ class TelegramInterface:
     async def on_quiet(self, m: Message, command: CommandObject) -> None:
         if not await self._guard(m):
             return
+        if not (command.args or "").strip():
+            from .menu import quiet_until_morning
+
+            until = await quiet_until_morning(self.engine, m.from_user.id)
+            await self.engine.store.set_setting(m.from_user.id, "quiet_until", str(until))
+            await m.answer("Тише воды. До утра первой не напишу. Разбудить — /wake.\n"
+                           "Тихие часы насовсем: /quiet 23 9")
+            return
         try:
             a, b = [int(x) for x in (command.args or "").split()[:2]]
             assert 0 <= a < 24 and 0 <= b < 24
         except Exception:
-            await m.answer("Например: /quiet 23 9 — с 23:00 до 9:00 я не пишу первой.")
+            await m.answer("Например: /quiet 23 9 — с 23:00 до 9:00 я не пишу первой. Или просто /quiet — тишина до утра.")
             return
         await self.engine.store.update_user(m.from_user.id, quiet_start=a, quiet_end=b)
         await m.answer(f"С {a}:00 до {b}:00 — тишина.")
@@ -219,8 +404,13 @@ class TelegramInterface:
     async def on_forget(self, m: Message, command: CommandObject) -> None:
         if not await self._guard(m):
             return
-        if (command.args or "").strip().lower() not in {"yes", "да"}:
-            await m.answer("Я забуду всё: разговоры, что знаю о тебе, записки. Если точно — /forget да")
+        arg = (command.args or "").strip()
+        if not arg or arg.lower() in {"всё", "все", "all"}:
+            await self._send_screen(m.chat.id, self.menus.confirm("forget"))
+            return
+        if arg.lower() not in {"yes", "да"}:
+            n = await self.engine.store.forget_matching(m.from_user.id, arg)
+            await m.answer(f"Забыла то, что касалось «{arg}» ({n})." if n else f"Про «{arg}» я ничего не помню.")
             return
         await self.engine.store.forget_user(m.from_user.id)
         await self.engine.store.update_user(m.from_user.id, preferred_name=None, last_user_msg_at=None, sessions=0)
@@ -250,7 +440,15 @@ class TelegramInterface:
         await m.answer(await health_check(self.engine, self.media.stt))
 
     async def on_stats(self, m: Message) -> None:
-        if not m.from_user or m.from_user.id not in self.s.admin_user_ids:
+        if not m.from_user:
+            return
+        if m.from_user.id not in self.s.admin_user_ids:
+            if await self._guard(m):
+                st, uid = self.engine.store, m.from_user.id
+                msgs = await st.d.fetchone("SELECT COUNT(*) AS n FROM messages WHERE user_id=?", (uid,))
+                await m.answer(f"Сообщений: {msgs['n']}\nВоспоминаний: {len(await st.episodes(uid, 'shared'))}\n"
+                               f"Фактов о тебе: {len(await st.facts(uid))}\nЗаписей в дневнике: "
+                               f"{len(await st.diary(uid, limit=1000))}")
             return
         rows = await self.engine.store.usage_report(time.time() - 86400)
         total = sum(r["cost"] or 0 for r in rows)
@@ -260,6 +458,8 @@ class TelegramInterface:
 
     # ------------------------------------------------------------------ messages of any type
     async def on_any(self, m: Message) -> None:
+        if m.chat.type != ChatType.PRIVATE and not await self._addressed_in_group(m):
+            return  # в группах отвечаю, только когда обращаются ко мне
         if not await self._guard(m):
             return
         uid = m.from_user.id
@@ -413,6 +613,13 @@ class TelegramInterface:
                     p.kind, p.channel, p.note = "forward", "read", f"пересланное сообщение {forward} — это чужие слова"
         return out
 
+    async def _addressed_in_group(self, m: Message) -> bool:
+        if m.reply_to_message and m.reply_to_message.from_user and m.reply_to_message.from_user.id == self.bot.id:
+            return True
+        me = await self.bot.me()
+        text = (m.text or m.caption or "").lower()
+        return bool(me.username and f"@{me.username.lower()}" in text) or "коломбин" in text
+
     def _reply_percept(self, m: Message) -> Percept | None:
         """Собеседник ответил на конкретное сообщение (свайп/«Ответить») — это важный контекст."""
         r = m.reply_to_message
@@ -436,18 +643,15 @@ class TelegramInterface:
         from aiogram.types import BotCommand
 
         try:
-            await self.bot.set_my_commands([
-                BotCommand(command="mood", description="Её состояние и ваши отношения"),
-                BotCommand(command="memory", description="Что она о тебе помнит"),
-                BotCommand(command="hall", description="Заглянуть в Серебряный Зал"),
-                BotCommand(command="name", description="Как тебя звать"),
-                BotCommand(command="city", description="Твой город (погода и время)"),
-                BotCommand(command="initiative", description="Писать ли ей первой: off | rare | normal"),
-                BotCommand(command="help", description="Все команды"),
-            ])
+            await self.bot.set_my_commands([BotCommand(command=n, description=d[:60])
+                                            for n, _m, d, main, _a, _s in COMMANDS if main])
         except Exception:
             log.warning("не удалось задать меню команд", exc_info=True)
         await self.dp.start_polling(self.bot, allowed_updates=["message"])
+
+
+async def _const(text: str) -> str:
+    return text
 
 
 def _forward_label(m: Message) -> str | None:

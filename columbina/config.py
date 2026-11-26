@@ -48,6 +48,7 @@ class Settings:
     telegram_token: str = field(default_factory=lambda: _env("TELEGRAM_BOT_TOKEN"))
     allowed_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ALLOWED_USER_IDS"))
     admin_user_ids: frozenset[int] = field(default_factory=lambda: _env_ids("ADMIN_USER_IDS"))
+    groups_enabled: bool = field(default_factory=lambda: _env_bool("GROUPS_ENABLED", False))
     mood_command: str = field(default_factory=lambda: _env("MOOD_COMMAND", "all").lower())  # all | admin
     debounce_seconds: float = field(default_factory=lambda: _env_float("DEBOUNCE_SECONDS", 1.5))
 

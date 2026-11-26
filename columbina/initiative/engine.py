@@ -145,6 +145,8 @@ class InitiativeEngine:
         now = now or datetime.now(timezone.utc)
         sent = 0
         for user in await self.store.list_users():
+            if user.chat_id != user.user_id:
+                continue  # первой пишет только в личку, никогда в группу
             try:
                 cand = await self.decide(user, now)
                 if not cand:

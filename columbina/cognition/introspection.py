@@ -152,3 +152,300 @@ def admin_error_note(debug: dict[str, Any]) -> str | None:
     if not err:
         return None
     return f"⚙️ (видно только админу) Ошибка модели: {str(err)[:500]}\nПроверка всех сервисов: /check"
+
+
+# ====================================================================== тексты команд (без Telegram)
+import json as _json  # noqa: E402
+
+DIARY_LABELS = {"event": "событие", "conversation": "разговор", "discovery": "открытие", "dream": "сон",
+                "emotion": "чувство", "thought": "мысль", "unfinished": "незаконченное"}
+
+
+def _date(ts: float, tz: ZoneInfo) -> str:
+    return datetime.fromtimestamp(ts, tz).strftime("%d.%m %H:%M")
+
+
+def _weight_word(w: float) -> str:
+    return "очень интересно" if w >= 0.75 else "интересно" if w >= 0.45 else "немного интересно"
+
+
+async def _tz(engine, user_id: int) -> ZoneInfo:
+    u = await engine.store.get_user(user_id)
+    try:
+        return ZoneInfo((u.timezone if u else None) or engine.s.default_timezone)
+    except Exception:  # noqa: BLE001
+        return ZoneInfo("UTC")
+
+
+async def status_text(engine, user_id: int, admin: bool = False) -> str:
+    st = engine.store
+    user = await st.get_user(user_id)
+    if not user:
+        return "Мы ещё не разговаривали. Напиши что-нибудь."
+    sit = await engine.situation_for(user)
+    emo = await engine.load_emotion(user_id, sit)
+    text, _ = engine.emotions.describe(emo, sit.tags)
+    sets = await st.settings(user_id)
+    paused = sets.get("paused") == "1"
+    until = float(sets.get("quiet_until", "0") or 0)
+    mode = {"off": "не пишу первой", "rare": "пишу первой изредка", "normal": "пишу первой, когда есть повод"}
+    lines = [
+        "Я здесь.",
+        f"Сейчас я {text}.",
+        f"У тебя: {sit.describe()}",
+        "Пауза: да — ни исследований, ни первых сообщений." if paused else f"Инициатива: {mode.get(user.initiative_mode, '')}.",
+        f"Тишина до {_date(until, await _tz(engine, user_id))}." if until > time.time() else
+        f"Тихие часы: {user.quiet_start}:00–{user.quiet_end}:00.",
+        "Интернет: могу поискать, если нужно." if engine.web else "Интернет: выключен.",
+    ]
+    if admin:
+        llm = engine.llm
+        model = getattr(llm, "main_model", None) or getattr(getattr(llm, "main", None), "main_model", "?")
+        lines.append(f"\n⚙️ модель: {model}; база: {st.d.dialect}; "
+                     f"вне зрения: {'да' if engine.vision and not engine.vision.main_vision else 'нет'}")
+    return "\n".join(lines)
+
+
+async def profile_text(engine, user_id: int) -> str:
+    st = engine.store
+    user = await st.get_user(user_id)
+    if not user:
+        return "Я пока ничего о тебе не знаю."
+    rel = await st.get_relationship(user_id)
+    stage = engine.relationship.stages.get(rel.stage, {}).get("name", "")
+    tz = await _tz(engine, user_id)
+    facts = await st.facts(user_id)
+    lines = [
+        f"Как зову тебя: {user.preferred_name or user.display_name or 'пока никак'}",
+        f"Где ты: {user.city or 'не знаю'}; время: {user.timezone or 'не знаю (считаю по Москве)'}",
+        f"Обращаемся: {'на «вы»' if user.register == 'vy' else 'на «ты»'}",
+        f"Знакомы с {datetime.fromtimestamp(user.created_at, tz):%d.%m.%Y}, встреч: {user.sessions}",
+        f"Мы сейчас: {stage}",
+    ]
+    if facts:
+        lines += ["", "Что я о тебе знаю:"] + [f"— {f.key}: {f.value}" + ("" if f.confidence >= 0.5 else " (догадка)")
+                                               for f in facts[:15]]
+    return "\n".join(lines)
+
+
+async def memories_text(engine, user_id: int, limit: int = 12) -> str:
+    eps = [e for e in await engine.store.episodes(user_id) if e.kind == "shared"]
+    if not eps:
+        return "Общих воспоминаний пока нет. Они появляются, когда случается что-то важное."
+    tz = await _tz(engine, user_id)
+    eps = sorted(eps, key=lambda e: (-e.importance, -e.created_at))[:limit]
+    return "Что я помню о нас:\n" + "\n".join(
+        f"{'★' * min(5, e.importance)} {datetime.fromtimestamp(e.created_at, tz):%d.%m} — {e.text}" for e in eps)
+
+
+async def remember(engine, user_id: int, text: str) -> str:
+    text = text.strip()[:400]
+    if not text:
+        return "Что запомнить? Напиши: /remember текст"
+    vec = (await engine.embedder.embed([text]))[0]
+    await engine.store.add_episode(user_id, f"Собеседник попросил запомнить: {text}", 5, None, "shared", vec)
+    return "Запомнила."
+
+
+async def recall_text(engine, user_id: int, query: str) -> str:
+    query = query.strip()
+    if not query:
+        return "Что вспомнить? Напиши: /recall слово или тема"
+    rel = await engine.store.get_relationship(user_id)
+    rc = await engine.retriever.recall(user_id, query, rel.stage, [], top_k=6)
+    lines = [f"— {e.text}" for e, _ in rc.episodes]
+    lines += [f"— (о тебе) {f.key}: {f.value}" for f in rc.facts[:4] if query.lower()[:4] in f"{f.key} {f.value}".lower()]
+    q = query.lower()
+    lines += [f"— (прочитала) {k['text'].split(' || ')[0]}" for k in await engine.store.knowledge(user_id, None, 100)
+              if q[:5] in k["text"].lower()][:3]
+    lines += [f"— (дневник) {d['text'][:160]}" for d in await engine.store.diary(user_id, query=query, limit=3)]
+    return ("Вот что вспомнилось:\n" + "\n".join(lines)) if lines else "Ничего такого не помню."
+
+
+async def history_text(engine, user_id: int) -> str:
+    st = engine.store
+    summary = await st.get_summary(user_id)
+    msgs = await st.last_messages(user_id, 10)
+    if not summary and not msgs:
+        return "Мы ещё ни о чём не говорили."
+    out = []
+    if summary:
+        out += ["Раньше:", summary, ""]
+    if msgs:
+        out.append("Недавно:")
+        for m in msgs:
+            who = "ты" if m.role == "user" else "я"
+            txt = m.text.replace("\n", " ")
+            txt = txt.split("</react>")[-1].strip() or "(реакция)"
+            out.append(f"{who}: {txt[:120]}")
+    return "\n".join(out)
+
+
+async def promises_text(engine, user_id: int) -> str:
+    st = engine.store
+    tz = await _tz(engine, user_id)
+    notes = await st.pending_notes(user_id)
+    threads = await st.open_threads(user_id)
+    goals = await st.goals(user_id)
+    out = []
+    if notes:
+        out += ["Записки на будущее:"] + [f"— {_date(n['due_at'], tz)}: {n['text']}" for n in notes]
+    if threads:
+        out += ["", "Хочу вернуться к:"] + [f"— {t['topic']}" for t in threads[:8]]
+    if goals:
+        out += ["", "Мои маленькие цели:"] + [f"— {g['title']}" + (f" ({g['progress']})" if g["progress"] else "")
+                                              for g in goals[:6]]
+    return "\n".join(out).strip() or "Обещаний и записок пока нет."
+
+
+async def diary_text(engine, user_id: int, arg: str = "") -> str:
+    arg = arg.strip().lower()
+    cats = {v: k for k, v in DIARY_LABELS.items()} | {k: k for k in DIARY_LABELS}
+    cat = cats.get(arg.rstrip("ы").rstrip("и")) or cats.get(arg)
+    rows = await engine.store.diary(user_id, category=cat, query=None if cat else (arg or None), limit=8)
+    if not rows:
+        return "В дневнике пока пусто." if not arg else "Об этом в дневнике ничего нет."
+    tz = await _tz(engine, user_id)
+    return "Из моего дневника:\n\n" + "\n\n".join(
+        f"{_date(r['created_at'], tz)} · {DIARY_LABELS.get(r['category'], r['category'])}\n{r['text']}" for r in rows)
+
+
+async def emotions_text(engine, user_id: int) -> str:
+    full = await mood_report(engine, user_id)
+    return full.split("\n\nОтношения с тобой")[0]
+
+
+async def thoughts_text(engine, user_id: int) -> str:
+    st = engine.store
+    user = await st.get_user(user_id)
+    if not user:
+        return "Пока я думаю о луне. Напиши мне что-нибудь."
+    sit = await engine.situation_for(user)
+    emo = await engine.load_emotion(user_id, sit)
+    text, _ = engine.emotions.describe(emo, sit.tags)
+    out = [f"Сейчас я {text}."]
+    diary = await st.diary(user_id, limit=3)
+    for d in diary:
+        if d["category"] in ("discovery", "thought", "unfinished", "event"):
+            out.append(f"Из головы не идёт: {d['text'][:220]}")
+            break
+    research = await st.open_research(user_id)
+    if research:
+        qs = _json.loads(research[0]["open_questions"] or "[]")
+        out.append(f"Хочу разобраться: {research[0]['topic']}" + (f" — {qs[0]}" if qs else ""))
+    goals = await st.goals(user_id)
+    if goals:
+        out.append("Ещё хочется: " + "; ".join(g["title"] for g in goals[:2]))
+    threads = await st.open_threads(user_id)
+    if threads:
+        out.append(f"И я помню про «{threads[0]['topic']}».")
+    return "\n".join(out)
+
+
+async def interests_text(engine, user_id: int) -> str:
+    if engine.inner:
+        await engine.inner.ensure_seed(user_id)
+    items = await engine.store.interests(user_id)
+    if not items:
+        return "Мне интересно многое, но я ещё не разобралась, что больше."
+    src = {"seed": "", "conversation": " — из наших разговоров", "research": " — после чтения"}
+    return "Что мне интересно:\n" + "\n".join(f"— {i['topic']}: {_weight_word(i['weight'])}{src.get(i['source'], '')}"
+                                              for i in items[:12])
+
+
+async def activity_text(engine, user_id: int) -> str:
+    st = engine.store
+    tz = await _tz(engine, user_id)
+    out = []
+    research = await st.research_since(user_id, time.time() - 7 * 86400)
+    if research:
+        out += ["Что я изучала:"] + [f"— {_date(r['updated_at'], tz)}: {r['topic']}"
+                                      + (f" — {r['summary'][:140]}" if r["summary"] else "")
+                                      + {"open": " (не закончила)", "abandoned": " (не нашла)"}.get(r["status"], "")
+                                      for r in research[:6]]
+    inits = await st.initiatives_since(user_id, time.time() - 7 * 86400)
+    if inits:
+        out += ["", "Когда писала первой:"] + [f"— {_date(i['sent_at'], tz)}: {i['text'][:100]}"
+                                                for i in inits[-5:]]
+    web = await st.web_recent(user_id, 6)
+    if web:
+        names = {"web_search": "искала", "read_url": "читала", "http_get": "смотрела данные",
+                 "research_search": "искала сама", "research_read": "читала сама"}
+        out += ["", "Интернет:"] + [f"— {names.get(w['tool'], w['tool'])}: {w['arg'][:80]}" for w in web]
+    dreams = await st.diary(user_id, "dream", limit=1)
+    if dreams:
+        out += ["", f"Последний сон: {_date(dreams[0]['created_at'], tz)}"]
+    return "\n".join(out).strip() or "Последние дни были тихими: я ничего не изучала и первой не писала."
+
+
+async def dream_text(engine, user_id: int) -> str:
+    st = engine.store
+    last = await st.diary(user_id, "dream", limit=1)
+    if last and time.time() - last[0]["created_at"] < 3 * 86400:
+        return "Мне снилось…\n\n" + last[0]["text"]
+    asked = float(await st.get_setting(user_id, "dream_asked", "0") or 0)
+    if engine.inner and engine.inner.enabled and time.time() - asked > 86400:
+        await st.set_setting(user_id, "dream_asked", str(time.time()))
+        text = await engine.inner.dream(user_id)
+        if text:
+            return "Сегодня мне снилось…\n\n" + text
+    if last:
+        return "Мне давно ничего не снилось. Последний сон был такой:\n\n" + last[0]["text"]
+    return "Мне пока ничего не снилось. Наверное, нужно больше лунных ночей."
+
+
+async def reflection_text(engine, user_id: int) -> str:
+    rel = await engine.store.get_relationship(user_id)
+    st = engine.relationship.stages.get(rel.stage, {})
+    labels = engine.persona.relationship.get("event_labels", {})
+    events = await engine.store.recent_events(user_id, 6)
+    good = [labels.get(k, k) for k, *_ in events if engine.relationship.events.get(k, 0) > 0]
+    bad = [labels.get(k, k) for k, *_ in events if engine.relationship.events.get(k, 0) < 0]
+    lines = [f"Думаю о нас. Мы — {st.get('name', 'знакомые')}."]
+    if good:
+        lines.append("Мне было хорошо от: " + ", ".join(dict.fromkeys(good)) + ".")
+    if bad:
+        lines.append("Задело: " + ", ".join(dict.fromkeys(bad)) + ".")
+    if rel.milestones:
+        lines.append("Помню, что ты " + ", ".join(engine.persona.relationship.get("milestone_labels", {}).get(m, m)
+                                                 for m in rel.milestones) + ".")
+    lines.append("Доверие растёт медленно — по поступкам." if rel.trust < 0.6 else "Я тебе доверяю.")
+    return "\n".join(lines)
+
+
+ABOUT = (
+    "Я — Коломбина. Kuutar, если по самому первому имени. Родилась из лунного света на острове Hiisi, "
+    "когда-то была Третьей из Предвестников Фатуи. Теперь живу для себя.\n\n"
+    "Здесь я разговариваю с тобой через программу: помню наши разговоры, иногда сама что-то изучаю и могу "
+    "написать первой. Всё, что я о тебе знаю, можно посмотреть в /profile и стереть в /settings → Данные."
+)
+
+
+async def backup_json(engine, user_id: int) -> bytes:
+    """Полная копия данных собеседника (без бинарных векторов) — для /backup."""
+    from ..memory.store import ALL_TABLES
+
+    out: dict[str, Any] = {"version": 1, "user_id": user_id, "created_at": time.time()}
+    for table in ALL_TABLES:
+        if table == "persona_embeddings":
+            continue
+        rows = await engine.store.d.fetchall(f"SELECT * FROM {table} WHERE user_id=?", (user_id,))
+        for r in rows:
+            r.pop("embedding", None)
+        out[table] = rows
+    return _json.dumps(out, ensure_ascii=False, indent=1, default=str).encode()
+
+
+async def export_text(engine, user_id: int) -> bytes:
+    parts = [await profile_text(engine, user_id), await memories_text(engine, user_id, 50),
+             await promises_text(engine, user_id), await diary_text(engine, user_id),
+             await interests_text(engine, user_id), await history_text(engine, user_id)]
+    return ("\n\n" + "=" * 30 + "\n\n").join(parts).encode()
+
+
+async def reset_context(engine, user_id: int) -> str:
+    """Сбросить текущий разговор (контекст), не трогая память о человеке."""
+    msgs = await engine.store.active_messages(user_id)
+    if msgs:
+        await engine.store.archive_messages_upto(user_id, msgs[-1].id)
+    return "Начнём разговор заново. Что было — я помню, но эту тему отпускаю."

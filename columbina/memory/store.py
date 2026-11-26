@@ -699,10 +699,12 @@ class MemoryStore:
         if category:
             q += " AND category=?"
             args.append(category)
-        if query:
-            q += " AND LOWER(text) LIKE ?"
-            args.append(f"%{query.lower()}%")
-        return await self.d.fetchall(q + " ORDER BY id DESC LIMIT ?", (*args, limit))
+        if not query:
+            return await self.d.fetchall(q + " ORDER BY id DESC LIMIT ?", (*args, limit))
+        # LOWER() в SQLite не понимает кириллицу — фильтруем в Python.
+        rows = await self.d.fetchall(q + " ORDER BY id DESC LIMIT 2000", args)
+        needle = query.lower()
+        return [r for r in rows if needle in r["text"].lower()][:limit]
 
     # ---------- goals ----------
     async def add_goal(self, user_id: int, title: str) -> int:
@@ -759,6 +761,21 @@ class MemoryStore:
         )
 
     # ---------- privacy ----------
+    async def forget_matching(self, user_id: int, needle: str) -> int:
+        """Выборочно забыть: факты, воспоминания, дневник и находки, где встречается слово (без учёта регистра)."""
+        low = needle.strip().lower()
+        if not low:
+            return 0
+        n = 0
+        for table, fields in (("facts", ("key", "value")), ("episodes", ("text",)), ("diary", ("text",)),
+                              ("knowledge", ("text",))):
+            rows = await self.d.fetchall(f"SELECT id, {', '.join(fields)} FROM {table} WHERE user_id=?", (user_id,))
+            ids = [r["id"] for r in rows if any(low in (r[f] or "").lower() for f in fields)]
+            for i in ids:
+                await self.d.execute(f"DELETE FROM {table} WHERE id=?", (i,))
+            n += len(ids)
+        return n
+
     async def forget_user(self, user_id: int) -> None:
         for table in ("messages", "summaries", "episodes", "facts", "relationship", "emotion_state",
                       "events", "threads", "notes", "initiatives", "web_log", "interests", "knowledge", "diary",
